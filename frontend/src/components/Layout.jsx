@@ -5,7 +5,7 @@ import Sidebar from './Sidebar';
 
 const Layout = () => {
     return (
-        <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: '#0a0a0a' }}>
+        <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: '#ffffff' }}>
             <Sidebar />
             <Box sx={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
                 <Outlet />

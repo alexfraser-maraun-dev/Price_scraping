@@ -46,3 +46,4 @@ tzdata==2025.3
 uritemplate==4.2.0
 urllib3==2.6.3
 uvicorn==0.39.0
+google-shopping-merchant-reports

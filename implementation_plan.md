@@ -6,10 +6,17 @@ Build a full-stack Price Comparison Dashboard. A Python FastAPI backend will ret
 ## Proposed Architecture
 
 ### Backend (Python / FastAPI)
-- **Framework**: FastAPI for high performance and automatic OpenAPI documentation.
+- **Framework**: FastAPI for high performance and automatic OpenAPI documentation.> [!IMPORTANT]
+> **API Migration**: We have successfully migrated from `v1beta` to `v1` (following the Feb 28 sunset). 
+> 
+> **Permission Split**:
+> 1. **Administrative (One-Time)**: The Merchant API `v1` requires a one-time project registration (`registerGcp`). This must be done by an **Admin** user to link the GCP project.
+> 2. **Operational (Ongoing)**: The actual "Price Insights" tool only requires the **Standard** role for the Service Account. This follows the "Principle of Least Privilege."
+
 - **Data Ingestion**: Use `google-cloud-bigquery` to execute the provided `product_source.sql` script.
 - **Price Sourcing**: Use `google-api-python-client` (or appropriate REST calls) to interact with the Google Merchant API for Price Insights.
-- **Business Logic**: 
+## Data Mapping & Join Logic
+**: 
   - Correlate BigQuery output with Merchant API responses by UPC.
   - Calculate the price difference metric: `((Competitor Price - Our Price) / Our Price) * 100`.
   - Format the final data structure containing: Our Product Details, Competitor Business Name, Competitor URL, Competitor Price, and Price Diff %.

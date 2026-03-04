@@ -5,52 +5,71 @@ import Products from './pages/Products';
 import Reports from './pages/Reports';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 
-// --- Premium Dark Theme Configuration ---
-const darkTheme = createTheme({
+// --- Premium Light Theme Configuration (v2) ---
+const lightTheme = createTheme({
     palette: {
-        mode: 'dark',
+        mode: 'light',
         background: {
-            default: '#0a0a0a',
-            paper: '#121212',
+            default: '#ffffff',
+            paper: '#ffffff',
         },
         primary: {
-            main: '#00e599', // Cyan/Green highlight
+            main: '#007b5e', // Bici Green
         },
         secondary: {
-            main: '#292929',
+            main: '#f1f3f5',
         },
         text: {
-            primary: '#ffffff',
-            secondary: '#a0a0a0',
+            primary: '#1a1a1a',
+            secondary: '#5f6368',
         },
         success: {
-            main: '#00e599',
+            main: '#007b5e',
         },
         error: {
-            main: '#ff4d4d',
+            main: '#dc3545',
         }
     },
     typography: {
-        fontFamily: '"Inter", "Roboto", "Helvetica", "Arial", sans-serif',
+        fontFamily: '"Inter", "Segoe UI", Roboto, sans-serif',
+        h4: { fontWeight: 700, letterSpacing: '-0.02em' },
         h5: { fontWeight: 600 },
-        subtitle2: { letterSpacing: '0.05em' }
+        h6: { fontWeight: 600 },
+        body1: { fontSize: '0.925rem' },
+        body2: { fontSize: '0.85rem' },
+        caption: { fontSize: '0.75rem' }
     },
     components: {
+        MuiCssBaseline: {
+            styleOverrides: {
+                body: {
+                    backgroundColor: '#ffffff',
+                }
+            }
+        },
         MuiButton: {
             styleOverrides: {
                 root: {
                     textTransform: 'none',
-                    borderRadius: '8px',
+                    borderRadius: '10px',
                     fontWeight: 600,
+                    padding: '8px 20px',
                 },
+                containedPrimary: {
+                    backgroundColor: '#007b5e',
+                    '&:hover': {
+                        backgroundColor: '#00624a',
+                    }
+                }
             },
         },
         MuiPaper: {
             styleOverrides: {
                 root: {
                     backgroundImage: 'none',
-                    border: '1px solid #1f1f1f',
-                    borderRadius: '12px',
+                    border: '1px solid #eef0f2',
+                    borderRadius: '16px',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.02)',
                 },
             },
         },
@@ -58,21 +77,25 @@ const darkTheme = createTheme({
             styleOverrides: {
                 root: {
                     border: 'none',
-                    '& .MuiDataGrid-cell': {
-                        borderBottom: '1px solid #1f1f1f',
+                    fontFamily: '"Inter", sans-serif',
+                    '& .MuiDataGrid-columnHeaderTitle': {
+                        fontWeight: 700,
+                        color: '#5f6368',
+                        fontSize: '0.75rem',
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.05em',
                     },
                     '& .MuiDataGrid-columnHeaders': {
-                        borderBottom: '1px solid #1f1f1f',
-                        backgroundColor: '#0a0a0a',
-                        color: '#a0a0a0',
-                        textTransform: 'uppercase',
-                        fontSize: '0.75rem',
-                        letterSpacing: '0.05em',
-                        fontWeight: 600
+                        backgroundColor: '#f8f9fa',
+                        borderBottom: '1px solid #eef0f2',
                     },
-                    '& .MuiDataGrid-footerContainer': {
-                        borderTop: '1px solid #1f1f1f',
+                    '& .MuiDataGrid-cell': {
+                        borderBottom: '1px solid #f8f9fa',
+                        color: '#1a1a1a',
                     },
+                    '& .MuiDataGrid-row:hover': {
+                        backgroundColor: '#f8f9fa',
+                    }
                 },
             },
         },
@@ -81,7 +104,7 @@ const darkTheme = createTheme({
 
 const App = () => {
     return (
-        <ThemeProvider theme={darkTheme}>
+        <ThemeProvider theme={lightTheme}>
             <CssBaseline />
             <Routes>
                 <Route path="/" element={<Layout />}>

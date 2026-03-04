@@ -3,21 +3,36 @@ WITH RECURSIVE
 latest_sale_headers AS (
   SELECT CAST(id AS INT64) AS sale_id, DATE(complete_time, 'America/Los_Angeles') AS sale_date
   FROM `bici-klaviyo-datasync.light_speed_retailne.sale_history`
-  WHERE completed = true AND voided = false     
+  WHERE completed = true 
+    AND voided = false     
+    AND DATE(complete_time, 'America/Los_Angeles') >= DATE_SUB(CURRENT_DATE('America/Los_Angeles'), INTERVAL 3 MONTH)
   QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY updated_time DESC) = 1
 ),
 latest_sale_lines AS (
-  SELECT CAST(sale_id AS INT64) AS sale_id, CAST(item_id AS INT64) AS item_id, calc_subtotal AS line_revenue
+  SELECT 
+    CAST(sale_id AS INT64) AS sale_id, 
+    CAST(item_id AS INT64) AS item_id, 
+    calc_subtotal AS line_revenue,
+    
+    -- Calculate the exact Margin PERCENTAGE for this specific transaction
+    SAFE_DIVIDE(
+      (calc_subtotal - (unit_quantity * COALESCE(fifo_cost, avg_cost, 0))), 
+      calc_subtotal
+    ) AS transaction_margin_pct
+    
   FROM `bici-klaviyo-datasync.light_speed_retailne.sale_line_history`
   QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY updated_time DESC) = 1
 ),
 recent_sales AS (
   SELECT
     l.item_id,
-    SUM(l.line_revenue) AS total_revenue
+    SUM(l.line_revenue) AS total_revenue,
+    
+    -- Take the Simple Average of all the transaction margins for this SKU
+    AVG(l.transaction_margin_pct) AS avg_sku_margin_pct
+    
   FROM latest_sale_headers h
   JOIN latest_sale_lines l ON h.sale_id = l.sale_id
-  WHERE h.sale_date >= DATE_SUB(CURRENT_DATE('America/Los_Angeles'), INTERVAL 3 MONTH)
   GROUP BY l.item_id
 ),
 
@@ -56,7 +71,7 @@ flat_categories AS (
   GROUP BY target_id
 ),
 
--- 3️⃣ GET CURRENT ITEM DETAILS (Added system_sku and custom_sku here)
+-- 3️⃣ GET CURRENT ITEM DETAILS 
 latest_item_info AS (
   SELECT
     id AS item_id,
@@ -91,6 +106,8 @@ current_pricing AS (
 
 -- 🏆 FINAL SELECT & RANKING
 SELECT
+  s.item_id, -- 🔑 NEW COLUMN: Added the primary item ID for API write-backs
+  
   b.brand_name,
   i.description AS product_name,
   i.upc,
@@ -103,7 +120,10 @@ SELECT
   fc.cat_array[SAFE_OFFSET(2)] AS subcategory_2,
   
   p.current_default_price,
-  s.total_revenue
+  s.total_revenue,
+  
+  -- Format the simple average as a clean percentage (e.g., 42.5)
+  ROUND(s.avg_sku_margin_pct * 100, 1) AS avg_margin_pct
   
 FROM recent_sales s
 LEFT JOIN latest_item_info i ON s.item_id = i.item_id
@@ -112,6 +132,8 @@ LEFT JOIN current_pricing p ON s.item_id = p.item_id
 LEFT JOIN flat_categories fc ON i.category_id = fc.category_id
 
 WHERE s.item_id IS NOT NULL
+  AND i.upc IS NOT NULL 
+  AND TRIM(i.upc) != ''
 
 ORDER BY s.total_revenue DESC
 LIMIT 1000;

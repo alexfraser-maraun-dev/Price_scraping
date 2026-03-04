@@ -6,6 +6,8 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import { useLocation, useNavigate } from 'react-router-dom';
 
+import Logo from './Logo';
+
 const navItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard_placeholder' },
     { text: 'Products', icon: <Inventory2Icon />, path: '/' },
@@ -19,51 +21,42 @@ const Sidebar = () => {
 
     return (
         <Box sx={{
-            width: 250,
-            borderRight: '1px solid #1f1f1f',
-            bgcolor: '#0a0a0a',
+            width: 240,
+            borderRight: '1px solid #eef0f2',
+            bgcolor: '#ffffff',
             height: '100vh',
             position: 'sticky',
             top: 0,
             display: 'flex',
             flexDirection: 'column',
-            p: 2
+            p: 2,
+            pt: 4
         }}>
-            <Box display="flex" alignItems="center" gap={1.5} mb={4} px={1}>
-                <Box sx={{
-                    bgcolor: '#00e599',
-                    width: 32, height: 32,
-                    borderRadius: 1.5,
-                    display: 'flex', justifyContent: 'center', alignItems: 'center'
-                }}>
-                    <TrendingUpIcon sx={{ color: '#000', fontSize: 20 }} />
-                </Box>
-                <Typography variant="h6" fontWeight="bold">BICI</Typography>
-            </Box>
-
-            <List>
+            <List sx={{ mt: 2 }}>
                 {navItems.map((item) => {
                     const isActive = location.pathname === item.path;
                     return (
                         <ListItem key={item.text} disablePadding sx={{ mb: 1 }}>
                             <ListItemButton
                                 onClick={() => navigate(item.path)}
-                                selected={isActive}
                                 sx={{
-                                    borderRadius: 2,
+                                    borderRadius: '10px',
+                                    py: 1.25,
+                                    bgcolor: isActive ? 'rgba(0, 123, 94, 0.08)' : 'transparent',
+                                    color: isActive ? '#007b5e' : '#5f6368',
                                     '&.Mui-selected': {
-                                        bgcolor: 'rgba(0, 229, 153, 0.1)',
+                                        bgcolor: 'rgba(0, 123, 94, 0.08)',
                                         '&:hover': {
-                                            bgcolor: 'rgba(0, 229, 153, 0.2)',
+                                            bgcolor: 'rgba(0, 123, 94, 0.12)',
                                         }
                                     },
                                     '&:hover': {
-                                        bgcolor: '#1a1a1a'
+                                        bgcolor: 'rgba(0, 0, 0, 0.04)'
                                     }
                                 }}
                             >
                                 <ListItemIcon sx={{
-                                    color: isActive ? '#00e599' : '#a0a0a0',
+                                    color: isActive ? '#007b5e' : '#5f6368',
                                     minWidth: 40
                                 }}>
                                     {React.cloneElement(item.icon, { fontSize: 'small' })}
@@ -72,8 +65,7 @@ const Sidebar = () => {
                                     primary={item.text}
                                     primaryTypographyProps={{
                                         fontSize: '0.875rem',
-                                        fontWeight: isActive ? 600 : 500,
-                                        color: isActive ? '#fff' : '#a0a0a0'
+                                        fontWeight: isActive ? 700 : 500
                                     }}
                                 />
                             </ListItemButton>
