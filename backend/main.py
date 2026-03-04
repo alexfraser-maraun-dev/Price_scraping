@@ -3,7 +3,7 @@ import json
 import asyncio
 import time
 from typing import List, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from google.cloud import bigquery
@@ -11,6 +11,8 @@ from google.shopping import merchant_reports_v1
 from google.oauth2 import service_account
 import pandas as pd
 from dotenv import load_dotenv
+from starlette.middleware.sessions import SessionMiddleware
+from bici_fastapi_auth import auth_router, require_auth, get_auth_config
 
 load_dotenv()
 
@@ -20,9 +22,13 @@ merchant_creds_path = os.getenv("MERCHANT_APPLICATION_CREDENTIALS")
 
 app = FastAPI(title="Price Comparison API")
 
+app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET", "super-secret-default-key-change-in-prod"))
+
+frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[frontend_url],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -50,6 +56,9 @@ class ProductComparison(BaseModel):
     total_revenue: float
     prospective_margin_pct: Optional[float]
     competitors: List[CompetitorPrice]
+
+# Include the Auth Router
+app.include_router(auth_router)
 
 # Clients initialization
 bq_client = None
@@ -149,7 +158,7 @@ async def get_price_insights(merchant_id: str):
         return {}
 
 @app.get("/api/products", response_model=List[ProductComparison])
-async def get_product_comparisons():
+async def get_product_comparisons(user: dict = Depends(require_auth)):
     if not bq_client:
         print("BQ client not initialized, returning empty list")
         return []

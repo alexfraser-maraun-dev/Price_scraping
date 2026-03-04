@@ -47,3 +47,6 @@ uritemplate==4.2.0
 urllib3==2.6.3
 uvicorn==0.39.0
 google-shopping-merchant-reports
+PyJWT[crypto]>=2.8.0
+itsdangerous>=2.1.2
+httpx>=0.25.0

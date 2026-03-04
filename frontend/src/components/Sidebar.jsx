@@ -1,12 +1,14 @@
 import React from 'react';
-import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, IconButton, Tooltip, Drawer, useMediaQuery, useTheme } from '@mui/material';
+import { Box, List, ListItem, ListItemButton, ListItemIcon, ListItemText, IconButton, Tooltip, Drawer, useMediaQuery, useTheme, Avatar, Typography, Divider } from '@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import Inventory2Icon from '@mui/icons-material/Inventory2';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import BarChartIcon from '@mui/icons-material/BarChart';
 import MenuIcon from '@mui/icons-material/Menu';
 import ChevronLeftIcon from '@mui/icons-material/ChevronLeft';
+import LogoutIcon from '@mui/icons-material/Logout';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { useAuth } from '../auth/AuthProvider';
 
 import Logo from './Logo';
 
@@ -20,6 +22,7 @@ const navItems = [
 const Sidebar = ({ isCollapsed, onToggle, mobileOpen, onMobileClose }) => {
     const navigate = useNavigate();
     const location = useLocation();
+    const { user, logout } = useAuth();
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
 
@@ -118,6 +121,47 @@ const Sidebar = ({ isCollapsed, onToggle, mobileOpen, onMobileClose }) => {
                     );
                 })}
             </List>
+
+            <Box flexGrow={1} />
+            <Divider sx={{ borderColor: '#eef0f2', mx: -1.5, mb: 1.5 }} />
+
+            <Box sx={{ p: 0.5 }}>
+                {user && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1, gap: 1, px: isCollapsed ? 0 : 1, justifyContent: isCollapsed ? 'center' : 'flex-start' }}>
+                        <Avatar sx={{ width: 28, height: 28, bgcolor: 'primary.main', fontSize: '0.8rem', fontWeight: 700 }}>
+                            {user.name ? user.name.charAt(0).toUpperCase() : (user.email ? user.email.charAt(0).toUpperCase() : 'U')}
+                        </Avatar>
+                        {!isCollapsed && !isMobile && (
+                            <Box sx={{ overflow: 'hidden' }}>
+                                <Typography variant="subtitle2" sx={{ fontSize: '0.75rem', fontWeight: 600, color: '#1a1a1a', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden' }}>
+                                    {user.name || 'User'}
+                                </Typography>
+                                <Typography variant="caption" sx={{ fontSize: '0.65rem', color: '#5f6368', whiteSpace: 'nowrap', textOverflow: 'ellipsis', overflow: 'hidden', display: 'block' }}>
+                                    {user.email}
+                                </Typography>
+                            </Box>
+                        )}
+                    </Box>
+                )}
+                <ListItemButton
+                    onClick={logout}
+                    sx={{
+                        borderRadius: '10px',
+                        py: 1,
+                        px: isCollapsed ? 0 : 1,
+                        justifyContent: isCollapsed ? 'center' : 'initial',
+                        color: theme.palette.error.main,
+                        '&:hover': { bgcolor: 'rgba(220, 53, 69, 0.08)' }
+                    }}
+                >
+                    <ListItemIcon sx={{ minWidth: isCollapsed ? 0 : 36, color: 'inherit', display: 'flex', justifyContent: 'center' }}>
+                        <LogoutIcon fontSize="small" />
+                    </ListItemIcon>
+                    {(!isCollapsed || isMobile) && (
+                        <ListItemText primary="Logout" primaryTypographyProps={{ fontSize: '0.875rem', fontWeight: 600 }} />
+                    )}
+                </ListItemButton>
+            </Box>
         </Box>
     );
 

@@ -1,0 +1,51 @@
+services:
+  # ==================================
+  # FRONTEND (React / Vite)
+  # ==================================
+  - type: web
+    name: price-intelligence-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        # This dynamically references the internal URL of the backend service defined below.
+        # Once both are deployed, this allows the React app to hit the live API.
+        fromService:
+          name: price-intelligence-backend
+          type: web
+          property: url
+
+  # ==================================
+  # BACKEND (Python / FastAPI)
+  # ==================================
+  - type: web
+    name: price-intelligence-backend
+    env: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      - key: FRONTEND_URL
+        fromService:
+          name: price-intelligence-frontend
+          type: web
+          property: url
+      # Add placeholders for Secrets that you will populate manually in the Render dashboard
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_REDIRECT_URL
+        sync: false
+      - key: SESSION_SECRET
+        sync: false
+      - key: ALLOW_DOMAIN
+        value: bici.cc
+      - key: MERCHANT_ID
+        sync: false
+      # Note: For GOOGLE_APPLICATION_CREDENTIALS and MERCHANT_APPLICATION_CREDENTIALS,
+      # you will use Render "Secret Files", not env vars.

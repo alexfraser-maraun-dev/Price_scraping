@@ -3,12 +3,28 @@ import { Box, IconButton, useMediaQuery, useTheme } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar';
+import { useAuth } from '../auth/AuthProvider';
+import Login from '../pages/Login';
+import CircularProgress from '@mui/material/CircularProgress';
 
 const Layout = () => {
     const theme = useTheme();
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const [isCollapsed, setIsCollapsed] = React.useState(false);
     const [mobileOpen, setMobileOpen] = React.useState(false);
+    const { user, loading } = useAuth();
+
+    if (loading) {
+        return (
+            <Box sx={{ display: 'flex', minHeight: '100vh', alignItems: 'center', justifyContent: 'center', bgcolor: '#f8f9fa' }}>
+                <CircularProgress sx={{ color: '#007b5e' }} />
+            </Box>
+        );
+    }
+
+    if (!user) {
+        return <Login />;
+    }
 
     return (
         <Box sx={{ display: 'flex', minHeight: '100vh', bgcolor: '#ffffff' }}>

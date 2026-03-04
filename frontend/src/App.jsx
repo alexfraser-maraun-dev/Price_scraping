@@ -3,6 +3,8 @@ import { Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout';
 import Products from './pages/Products';
 import Reports from './pages/Reports';
+import Login from './pages/Login';
+import { AuthProvider } from './auth/AuthProvider';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
 
 // --- Premium Light Theme Configuration (v2) ---
@@ -106,12 +108,14 @@ const App = () => {
     return (
         <ThemeProvider theme={lightTheme}>
             <CssBaseline />
-            <Routes>
-                <Route path="/" element={<Layout />}>
-                    <Route index element={<Products />} />
-                    <Route path="reports" element={<Reports />} />
-                </Route>
-            </Routes>
+            <AuthProvider>
+                <Routes>
+                    <Route path="/" element={<Layout />}>
+                        <Route index element={<Products />} />
+                        <Route path="reports" element={<Reports />} />
+                    </Route>
+                </Routes>
+            </AuthProvider>
         </ThemeProvider>
     );
 };
