@@ -48,26 +48,33 @@ def test_merchant_api():
             LIMIT 5
         """
         
-        print("Executing ProductView query...")
-        request = merchant_reports_v1.SearchRequest(
+        print("\nExecuting PriceCompetitiveness query...")
+        comp_query = """
+            SELECT 
+                id,
+                benchmark_price,
+                report_country_code
+            FROM price_competitiveness_product_view
+            WHERE report_country_code = 'CA'
+            LIMIT 5
+        """
+        comp_request = merchant_reports_v1.SearchRequest(
             parent=parent,
-            query=query
+            query=comp_query
         )
+        comp_response = client.search(request=comp_request)
         
-        response = client.search(request=request)
-        
-        print("\nResults:")
-        count = 0
-        for row in response:
-            count += 1
-            p = row.product_view
-            print(f"- ID: {p.id}, OfferID: {p.offer_id}: {p.title} (GTINs: {p.gtin}, Brand: {p.brand})")
+        comp_count = 0
+        for row in comp_response:
+            comp_count += 1
+            c = row.price_competitiveness_product_view
+            print(f"- ID: {c.id}, Benchmark: {c.benchmark_price.amount_micros / 1000000 if c.benchmark_price.amount_micros else 'N/A'}")
             
-        if count == 0:
-            print("No products found.")
+        if comp_count == 0:
+            print("No benchmark data found.")
         else:
-            print(f"\nSuccessfully fetched {count} products.")
-            
+            print(f"\nSuccessfully fetched {comp_count} benchmark entries.")
+
     except Exception as e:
         print(f"Error connecting to Merchant API: {e}")
 

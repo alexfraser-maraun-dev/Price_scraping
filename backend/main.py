@@ -1,5 +1,7 @@
 import os
 import json
+import asyncio
+import time
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,59 +20,15 @@ merchant_creds_path = os.getenv("MERCHANT_APPLICATION_CREDENTIALS")
 
 app = FastAPI(title="Price Comparison API")
 
-# Target Competitors
-TARGET_COMPETITORS = [
-    "primeauvelo.com",
-    "enroute.cc",
-    "thebikeshop.com",
-    "steedcycles.com"
-]
-
-# Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins for development
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Initialize GCP Clients
-try:
-    # 1. BigQuery Client (using bici-klaviyo-datasync credentials)
-    if bq_creds_path:
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = bq_creds_path
-    bq_client = bigquery.Client()
-    print("Successfully initialized BigQuery client")
-    
-    # 2. Merchant API Client (using bici-price-compare credentials)
-    merchant_report_client = None
-    MERCHANT_ID = os.getenv("MERCHANT_ID")
-    if merchant_creds_path:
-        # Use service_account.Credentials to initialize the new Merchant API client
-        creds = service_account.Credentials.from_service_account_file(merchant_creds_path)
-        merchant_report_client = merchant_reports_v1.ReportServiceClient(credentials=creds)
-        print(f"Successfully initialized Merchant API client (Reports) for ID: {MERCHANT_ID}")
-    
-    # Reset credentials to default BQ key for subsequent BQ operations if needed
-    if bq_creds_path:
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = bq_creds_path
-
-except Exception as e:
-    print(f"Warning: Failed to initialize GCP clients: {e}")
-    bq_client = None
-    merchant_report_client = None
-
-# Load the SQL query
-def get_product_source_sql() -> str:
-    sql_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'product_source.sql')
-    try:
-        with open(sql_path, 'r') as file:
-            return file.read()
-    except FileNotFoundError:
-        print(f"Error: Could not find {sql_path}")
-        return ""
-
+# Models
 class CompetitorPrice(BaseModel):
     business_name: str
     url: str
@@ -78,33 +36,56 @@ class CompetitorPrice(BaseModel):
     price_diff_pct: float
 
 class ProductComparison(BaseModel):
-    item_id: Optional[int] = None
+    item_id: Optional[int]
     system_sku: str
-    custom_sku: Optional[str] = None
-    upc: Optional[str] = None
-    product_name: Optional[str] = None
-    brand_name: Optional[str] = None
-    category_main: Optional[str] = None
-    subcategory_1: Optional[str] = None
-    subcategory_2: Optional[str] = None
-    our_price: Optional[float] = None
-    total_revenue: Optional[float] = None
-    avg_margin_pct: Optional[float] = None
-    competitors: List[CompetitorPrice] = []
+    custom_sku: Optional[str]
+    upc: Optional[str]
+    product_name: str
+    brand_name: Optional[str]
+    category_main: Optional[str]
+    subcategory_1: Optional[str]
+    subcategory_2: Optional[str]
+    current_cost: Optional[float]
+    our_price: float
+    total_revenue: float
+    prospective_margin_pct: Optional[float]
+    competitors: List[CompetitorPrice]
 
-@app.get("/api/health")
-def health_check():
-    return {"status": "ok"}
+# Clients initialization
+bq_client = None
+merchant_report_client = None
 
-async def get_price_insights(merchant_id: str) -> dict:
-    """
-    Fetches benchmark price insights from Google Merchant Center.
-    Uses the PriceCompetitivenessProductView to get the current Google Benchmark.
-    Maps by GTIN to align with LightSpeed UPCs.
-    """
+try:
+    if bq_creds_path:
+        bq_creds = service_account.Credentials.from_service_account_file(bq_creds_path)
+        bq_client = bigquery.Client(credentials=bq_creds, project=bq_creds.project_id)
+        print(f"Successfully initialized BigQuery client for project: {bq_creds.project_id}")
+    else:
+        print("GOOGLE_APPLICATION_CREDENTIALS not set")
+except Exception as e:
+    print(f"Error initializing BigQuery client: {e}")
+
+try:
+    if merchant_creds_path:
+        merchant_creds = service_account.Credentials.from_service_account_file(merchant_creds_path)
+        merchant_report_client = merchant_reports_v1.ReportServiceClient(credentials=merchant_creds)
+        print(f"Successfully initialized Merchant API client (Reports) for ID: {os.getenv('MERCHANT_ID')}")
+    else:
+        print("MERCHANT_APPLICATION_CREDENTIALS not set")
+except Exception as e:
+    print(f"Error initializing Merchant API client: {e}")
+
+def get_product_source_sql():
+    path = os.path.join(os.path.dirname(__file__), '..', 'product_source.sql')
+    if os.path.exists(path):
+        with open(path, 'r') as f:
+            return f.read()
+    return None
+
+async def get_price_insights(merchant_id: str):
     if not merchant_report_client or not merchant_id:
         return {}
-
+    
     parent = f"accounts/{merchant_id}"
     
     # 1. Fetch Benchmark Prices scoped by ID
@@ -117,7 +98,7 @@ async def get_price_insights(merchant_id: str) -> dict:
         WHERE report_country_code = 'CA'
     """
 
-    # 2. Fetch GTIN map scoped by ID
+    # 2. Fetch GTIN map scoped by ID (sequential join is not supported in Merchant Reports API, so we fetch both)
     product_query = """
         SELECT 
             id,
@@ -126,9 +107,20 @@ async def get_price_insights(merchant_id: str) -> dict:
     """
 
     try:
-        # Get Benchmarks
-        comp_request = merchant_reports_v1.SearchRequest(parent=parent, query=comp_query)
-        comp_response = merchant_report_client.search(request=comp_request)
+        start_time = time.time()
+        
+        # Define search tasks for parallel execution
+        async def fetch_comp():
+            req = merchant_reports_v1.SearchRequest(parent=parent, query=comp_query)
+            return merchant_report_client.search(request=req)
+
+        async def fetch_products():
+            req = merchant_reports_v1.SearchRequest(parent=parent, query=product_query)
+            return merchant_report_client.search(request=req)
+
+        print(f"Fetching Merchant insights for ID: {merchant_id} (Parallel)...")
+        # Run Merchant API queries in parallel to save time
+        comp_response, product_response = await asyncio.gather(fetch_comp(), fetch_products())
         
         benchmarks_by_id = {}
         for row in comp_response:
@@ -136,34 +128,29 @@ async def get_price_insights(merchant_id: str) -> dict:
             if comp.id and comp.benchmark_price.amount_micros:
                 benchmarks_by_id[comp.id] = comp.benchmark_price.amount_micros
                 
-        # Get GTINs
-        product_request = merchant_reports_v1.SearchRequest(parent=parent, query=product_query)
-        product_response = merchant_report_client.search(request=product_request)
-        
         insights_by_upc: dict = {}
         for row in product_response:
             p = row.product_view
-            # gtin is a repeated protobuf field, access first element
             gtin_list = list(p.gtin) if p.gtin else []
             if p.id and gtin_list and p.id in benchmarks_by_id:
                 benchmark_data = {'benchmark_price_micros': benchmarks_by_id[p.id]}
                 for raw_gtin in gtin_list:
                     raw_gtin = str(raw_gtin)
-                    # Index both with and without leading zeros to match BQ UPCs
                     insights_by_upc[raw_gtin] = benchmark_data
+                    # Index both with and without leading zeros to match BQ UPCs
                     stripped = raw_gtin.lstrip('0')
                     if stripped:
                         insights_by_upc[stripped] = benchmark_data
         
+        print(f"Merchant API fetch took {time.time() - start_time:.2f} seconds. Found {len(insights_by_upc)} GTIN mappings.")
         return insights_by_upc
     except Exception as e:
-        print(f"Error fetching price insights from new Merchant API: {e}")
+        print(f"Error fetching price insights from Merchant API: {e}")
         return {}
 
 @app.get("/api/products", response_model=List[ProductComparison])
 async def get_product_comparisons():
     if not bq_client:
-        # Fallback for development if BQ is not configured
         print("BQ client not initialized, returning empty list")
         return []
         
@@ -171,10 +158,14 @@ async def get_product_comparisons():
     if not sql:
         raise HTTPException(status_code=500, detail="SQL query not found")
 
+    overall_start = time.time()
     try:
         # 1. Fetch from BigQuery
+        print("Starting BigQuery fetch...")
+        bq_start = time.time()
         query_job = bq_client.query(sql)
         results = query_job.result()
+        print(f"BigQuery fetch took {time.time() - bq_start:.2f} seconds.")
         
         # 2. Fetch Price Insights from Merchant API
         merchant_id = os.getenv("MERCHANT_ID", "")
@@ -192,14 +183,14 @@ async def get_product_comparisons():
                 category_main=row.category_main,
                 subcategory_1=row.subcategory_1,
                 subcategory_2=row.subcategory_2,
-                our_price=float(row.current_default_price) if row.current_default_price else 0.0,
-                total_revenue=float(row.total_revenue) if row.total_revenue else 0.0,
-                avg_margin_pct=float(row.avg_margin_pct) if row.avg_margin_pct is not None else None,
+                current_cost=float(row.current_cost) if row.current_cost is not None else None,
+                our_price=float(row.current_default_price) if row.current_default_price is not None else 0.0,
+                total_revenue=float(row.total_revenue) if row.total_revenue is not None else 0.0,
+                prospective_margin_pct=float(row.prospective_margin_pct) if row.prospective_margin_pct is not None else None,
                 competitors=[]
             )
             
             # 3. Map Merchant Insights to Product by UPC string
-            # We strip leading zeros to ensure generic GTIN vs UPC-12 equality
             matched_insight = None
             if product.upc:
                 clean_upc = str(product.upc).lstrip('0')
@@ -223,9 +214,11 @@ async def get_product_comparisons():
             
             products.append(product)
             
+        print(f"Total /api/products request took {time.time() - overall_start:.2f} seconds for {len(products)} items.")
         return products
         
     except Exception as e:
+        print(f"Error in /api/products: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":

@@ -12,25 +12,14 @@ latest_sale_lines AS (
   SELECT 
     CAST(sale_id AS INT64) AS sale_id, 
     CAST(item_id AS INT64) AS item_id, 
-    calc_subtotal AS line_revenue,
-    
-    -- Calculate the exact Margin PERCENTAGE for this specific transaction
-    SAFE_DIVIDE(
-      (calc_subtotal - (unit_quantity * COALESCE(fifo_cost, avg_cost, 0))), 
-      calc_subtotal
-    ) AS transaction_margin_pct
-    
+    calc_subtotal AS line_revenue
   FROM `bici-klaviyo-datasync.light_speed_retailne.sale_line_history`
   QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY updated_time DESC) = 1
 ),
 recent_sales AS (
   SELECT
     l.item_id,
-    SUM(l.line_revenue) AS total_revenue,
-    
-    -- Take the Simple Average of all the transaction margins for this SKU
-    AVG(l.transaction_margin_pct) AS avg_sku_margin_pct
-    
+    SUM(l.line_revenue) AS total_revenue
   FROM latest_sale_headers h
   JOIN latest_sale_lines l ON h.sale_id = l.sale_id
   GROUP BY l.item_id
@@ -71,7 +60,7 @@ flat_categories AS (
   GROUP BY target_id
 ),
 
--- 3️⃣ GET CURRENT ITEM DETAILS 
+-- 3️⃣ GET CURRENT ITEM DETAILS (Added current cost here)
 latest_item_info AS (
   SELECT
     id AS item_id,
@@ -80,7 +69,9 @@ latest_item_info AS (
     description,
     upc,
     system_sku,
-    custom_sku
+    custom_sku,
+    -- Pull the latest average cost to act as our baseline for prospective margin
+    CAST(avg_cost AS FLOAT64) AS current_cost 
   FROM `bici-klaviyo-datasync.light_speed_retailne.item_history`
   QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY updated_time DESC) = 1
 ),
@@ -106,8 +97,7 @@ current_pricing AS (
 
 -- 🏆 FINAL SELECT & RANKING
 SELECT
-  s.item_id, -- 🔑 NEW COLUMN: Added the primary item ID for API write-backs
-  
+  s.item_id, 
   b.brand_name,
   i.description AS product_name,
   i.upc,
@@ -119,11 +109,18 @@ SELECT
   fc.cat_array[SAFE_OFFSET(1)] AS subcategory_1,
   fc.cat_array[SAFE_OFFSET(2)] AS subcategory_2,
   
+  -- Financial Baseline
+  i.current_cost,
   p.current_default_price,
   s.total_revenue,
   
-  -- Format the simple average as a clean percentage (e.g., 42.5)
-  ROUND(s.avg_sku_margin_pct * 100, 1) AS avg_margin_pct
+  -- 🛡️ PROSPECTIVE MARGIN: Current (Price - Cost) / Price
+  ROUND(
+    SAFE_DIVIDE(
+      (p.current_default_price - i.current_cost), 
+      p.current_default_price
+    ) * 100, 
+  1) AS prospective_margin_pct
   
 FROM recent_sales s
 LEFT JOIN latest_item_info i ON s.item_id = i.item_id

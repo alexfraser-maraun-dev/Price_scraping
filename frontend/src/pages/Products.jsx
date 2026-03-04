@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Container, Typography, Box, Paper, CircularProgress, LinearProgress,
   Alert, Button, TextField, Chip, Checkbox, Table, TableBody,
@@ -159,7 +159,7 @@ const Products = () => {
         const requiredHeaders = [
           'brand_name', 'product_name', 'category_main',
           'subcategory_1', 'subcategory_2', 'custom_sku',
-          'total_revenue', 'current_default_price', 'upc', 'avg_margin_pct'
+          'total_revenue', 'current_default_price', 'upc', 'current_cost', 'prospective_margin_pct'
         ];
 
         const missing = requiredHeaders.filter(h => !headers.includes(h));
@@ -184,7 +184,8 @@ const Products = () => {
             subcategory_1: row['subcategory_1'],
             subcategory_2: row['subcategory_2'],
             total_revenue: parseFloat(row['total_revenue'] || 0),
-            avg_margin_pct: parseFloat(row['avg_margin_pct'] || 0),
+            current_cost: parseFloat(row['current_cost'] || 0),
+            prospective_margin_pct: parseFloat(row['prospective_margin_pct'] || 0),
             competitors: []
           };
         }).filter(p => p.custom_sku || p.upc);
@@ -263,45 +264,15 @@ const Products = () => {
 
   const isBelowMarket = (p) => {
     const avg = getAvgCompPrice(p);
-    return avg !== null && p.our_price > avg;
+    return avg !== null && p.our_price < avg;
   };
 
   const isAboveMarket = (p) => {
     const avg = getAvgCompPrice(p);
-    return avg !== null && p.our_price <= avg;
+    return avg !== null && p.our_price > avg;
   };
 
-  const totalBelowMarketDollars = useMemo(() => {
-    return products.reduce((acc, p) => {
-      const avg = getAvgCompPrice(p);
-      if (avg !== null && p.our_price > avg) {
-        acc += (p.our_price - avg);
-      }
-      return acc;
-    }, 0);
-  }, [products]);
 
-  const totalBelowMarketPct = useMemo(() => {
-    let totalOurPrice = 0;
-    let totalDiff = 0;
-    products.forEach(p => {
-      const avg = getAvgCompPrice(p);
-      if (avg !== null && p.our_price > avg) {
-        totalOurPrice += p.our_price;
-        totalDiff += (p.our_price - avg);
-      }
-    });
-    return totalOurPrice > 0 ? (totalDiff / totalOurPrice * 100) : 0;
-  }, [products]);
-
-  const totalBiciValue = useMemo(() => {
-    return products.reduce((acc, p) => acc + (p.our_price || 0), 0);
-  }, [products]);
-
-  const avgMargin = useMemo(() => {
-    const margins = products.map(p => p.avg_margin_pct).filter(m => m !== undefined && m !== null);
-    return margins.length > 0 ? (margins.reduce((a, b) => a + b, 0) / margins.length).toFixed(1) : '—';
-  }, [products]);
 
   const getSuggestedPrice = (product) => {
     const compPrices = product.competitors?.map(c => c.price).filter(Boolean) || [];
@@ -314,7 +285,7 @@ const Products = () => {
       case 'match_lowest': basePrice = lowestComp; break;
       case 'undercut_lowest': basePrice = lowestComp * 0.99; break;
       case 'match_average': basePrice = avgComp; break;
-      case 'beat_average': basePrice = avgComp * 0.98; break;
+      case 'beat_average': basePrice = avgComp * 1.02; break;
       case 'match_highest': basePrice = highestComp; break;
       default: basePrice = product.our_price;
     }
@@ -345,7 +316,7 @@ const Products = () => {
       let bVal = b[sortField];
 
       // Handle numeric fields
-      if (['our_price', 'avg_margin_pct', 'total_revenue'].includes(sortField)) {
+      if (['our_price', 'prospective_margin_pct', 'total_revenue'].includes(sortField)) {
         aVal = parseFloat(aVal) || 0;
         bVal = parseFloat(bVal) || 0;
         return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
@@ -374,9 +345,91 @@ const Products = () => {
     return colors[cat] || { bg: '#f1f3f4', text: '#5f6368' };
   };
 
-  const avgOurPrice = products.length > 0 ? products.reduce((acc, p) => acc + (p.our_price || 0), 0) / products.length : 0;
-  const belowCount = products.filter(isBelowMarket).length;
-  const aboveCount = products.filter(isAboveMarket).length;
+  // When rows are selected, all metric tiles scope to the selection; otherwise fall back to filteredProducts
+  const activeProducts = useMemo(() => {
+    if (selectedRows.size === 0) return filteredProducts;
+    return filteredProducts.filter(p => selectedRows.has(p.upc || p.system_sku));
+  }, [filteredProducts, selectedRows]);
+
+  const isSelectionMode = selectedRows.size > 0;
+
+  // Unified market-position evaluator for a given price function
+  const computeMarketMetrics = useCallback((products, getPriceFn) => {
+    let belowCnt = 0, aboveCnt = 0;
+    let dollarBelow = 0, dollarAbove = 0;
+    let totalBelowBase = 0, totalBelowDiff = 0;
+    let totalAboveBase = 0, totalAboveDiff = 0;
+    products.forEach(p => {
+      const price = getPriceFn(p);
+      const avg = getAvgCompPrice(p);
+      if (avg === null) return;
+      if (price < avg) {
+        // Our price is BELOW market — we are competitive
+        belowCnt++;
+        dollarBelow += (avg - price);
+        totalBelowBase += avg;
+        totalBelowDiff += (avg - price);
+      } else if (price > avg) {
+        // Our price is ABOVE market — we are overpriced
+        aboveCnt++;
+        dollarAbove += (price - avg);
+        totalAboveBase += price;
+        totalAboveDiff += (price - avg);
+      }
+    });
+    return {
+      belowCount: belowCnt,
+      aboveCount: aboveCnt,
+      dollarBelow,
+      pctBelow: totalBelowBase > 0 ? (totalBelowDiff / totalBelowBase * 100) : 0,
+      dollarAbove,
+      pctAbove: totalAboveBase > 0 ? (totalAboveDiff / totalAboveBase * 100) : 0,
+    };
+  }, [getAvgCompPrice]);
+
+  // Baseline = current prices (no rule applied)
+  const baselineMetrics = useMemo(() =>
+    computeMarketMetrics(activeProducts, p => p.our_price),
+    [activeProducts, computeMarketMetrics]);
+
+  // Proposed = rule-adjusted prices
+  const proposedMetrics = useMemo(() =>
+    computeMarketMetrics(activeProducts, p =>
+      hasPricingRule ? (getSuggestedPrice(p) ?? p.our_price) : p.our_price
+    ),
+    [activeProducts, computeMarketMetrics, hasPricingRule, pricingRule, pctChange, dollarChange]);
+
+  // Live displayed values (proposed when rule active, baseline otherwise)
+  const liveMetrics = hasPricingRule ? proposedMetrics : baselineMetrics;
+
+  const avgMargin = useMemo(() => {
+    const margins = activeProducts.map(p => p.prospective_margin_pct).filter(m => m !== undefined && m !== null);
+    return margins.length > 0 ? (margins.reduce((a, b) => a + b, 0) / margins.length).toFixed(1) : '—';
+  }, [activeProducts]);
+
+  const proposedMargin = useMemo(() => {
+    const margins = activeProducts.map(p => {
+      const suggested = (hasPricingRule && getSuggestedPrice(p) !== null) ? getSuggestedPrice(p) : p.our_price;
+      if (!suggested || !p.current_cost) return p.prospective_margin_pct;
+      return ((suggested - p.current_cost) / suggested) * 100;
+    }).filter(m => m !== undefined && m !== null);
+    return margins.length > 0 ? (margins.reduce((a, b) => a + b, 0) / margins.length).toFixed(1) : '—';
+  }, [activeProducts, hasPricingRule, pricingRule, pctChange, dollarChange]);
+
+  // Compact delta badge — only renders when a pricing rule is active
+  const DeltaBadge = ({ current, baseline, fmt, positiveIsGood = true }) => {
+    if (!hasPricingRule) return null;
+    if (isNaN(current) || isNaN(baseline)) return null;
+    const delta = current - baseline;
+    if (Math.abs(delta) < 0.001) return null;
+    const isImprovement = positiveIsGood ? delta > 0 : delta < 0;
+    const sign = delta > 0 ? '+' : '';
+    return (
+      <Box component="span" sx={{ ml: 0.75, fontSize: '0.64rem', fontWeight: 800, color: isImprovement ? '#28a745' : '#dc3545', whiteSpace: 'nowrap', bgcolor: isImprovement ? 'rgba(40, 167, 69, 0.1)' : 'rgba(220, 53, 69, 0.1)', px: 0.6, py: 0.1, borderRadius: '4px' }}>
+        {sign}{fmt(delta)}
+      </Box>
+    );
+  };
 
   const ruleOptions = [
     { value: 'none', label: 'No Rule' },
@@ -395,18 +448,24 @@ const Products = () => {
     <Box sx={{ p: 4, pt: 3, maxWidth: '1600px', margin: '0 auto', bgcolor: '#ffffff', minHeight: '100vh' }}>
       {/* Header Section */}
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={4}>
-        <Box display="flex" alignItems="center" gap={3}>
-          <Logo />
-          <Divider orientation="vertical" flexItem sx={{ mx: 1, borderColor: '#eef0f2' }} />
-          <Box display="flex" alignItems="center" gap={2}>
+        <Box display="flex" alignItems="center" gap={2}>
+          <Typography variant="h5" sx={{ fontWeight: 800, color: '#1a1a1a', letterSpacing: '-0.02em', mr: 2 }}>
+            Products
+          </Typography>
+          <Chip
+            label={`${filteredProducts.length} UPCs`}
+            sx={{ bgcolor: '#f1f3f5', fontWeight: 600, color: '#1a1a1a', borderRadius: '8px' }}
+          />
+          {isSelectionMode && (
             <Chip
-              label={`${products.length} UPCs`}
-              sx={{ bgcolor: '#f1f3f5', fontWeight: 600, color: '#1a1a1a', borderRadius: '8px' }}
+              label={`${selectedRows.size} selected`}
+              size="small"
+              sx={{ bgcolor: '#e8f0fe', fontWeight: 600, color: '#1a73e8', borderRadius: '8px' }}
             />
-            <Typography variant="body2" color="text.secondary" display="flex" alignItems="center" gap={1}>
-              <Box component="span" sx={{ opacity: 0.6 }}>Last scrape: Today, 08:30 AM</Box>
-            </Typography>
-          </Box>
+          )}
+          <Typography variant="body2" color="text.secondary" sx={{ opacity: 0.6, ml: 1 }}>
+            Last scrape: Today, 08:30 AM
+          </Typography>
         </Box>
 
         <Box display="flex" gap={1.5}>
@@ -534,81 +593,121 @@ const Products = () => {
         </Paper>
       </Box>
 
-      {/* Stats Overview Grid */}
-      <Grid container spacing={2} mb={4}>
-        <Grid item xs={12} sm={6} md={2}>
-          <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2, bgcolor: '#fcfcfc', border: '1px solid #eef0f2', borderRadius: '12px' }}>
-            <Avatar sx={{ bgcolor: 'rgba(0, 123, 94, 0.08)', color: '#007b5e' }}><AttachMoneyIcon /></Avatar>
+      {/* Stats Overview Grid — always 2 rows of 4, banner anchored below */}
+      <Grid container spacing={2} mb={0}>
+        {/* Row 1 */}
+        <Grid item xs={6} sm={3}>
+          <Paper sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#fcfcfc', border: '1px solid #eef0f2', borderRadius: '12px' }}>
+            <Avatar sx={{ bgcolor: 'rgba(0, 123, 94, 0.08)', color: '#007b5e', width: 34, height: 34 }}><AttachMoneyIcon fontSize="small" /></Avatar>
             <Box>
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>Average Margin</Typography>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>{avgMargin}%</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.6rem', whiteSpace: 'nowrap' }}>Average Margin</Typography>
+              <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{avgMargin}%</Typography>
             </Box>
           </Paper>
         </Grid>
-        <Grid item xs={12} sm={6} md={2}>
-          <Paper
-            onClick={() => setMarketFilter(marketFilter === 'below' ? '' : 'below')}
-            sx={{
-              p: 2, display: 'flex', alignItems: 'center', gap: 2, bgcolor: '#fcfcfc', border: marketFilter === 'below' ? `2px solid ${theme.palette.success.main}` : '1px solid #eef0f2', borderRadius: '12px', cursor: 'pointer'
-            }}
-          >
-            <Avatar sx={{ bgcolor: 'rgba(40, 167, 69, 0.08)', color: '#28a745' }}><TrendingDownIcon /></Avatar>
+        <Grid item xs={6} sm={3}>
+          <Paper sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: hasPricingRule ? '#f0f4ff' : '#fcfcfc', border: hasPricingRule ? '1px solid #1a73e8' : '1px solid #eef0f2', borderRadius: '12px' }}>
+            <Avatar sx={{ bgcolor: hasPricingRule ? 'rgba(26,115,232,0.08)' : 'rgba(0,123,94,0.08)', color: hasPricingRule ? '#1a73e8' : '#007b5e', width: 34, height: 34 }}><AttachMoneyIcon fontSize="small" /></Avatar>
             <Box>
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>Below Market</Typography>
-              <Box display="flex" alignItems="baseline" gap={0.5}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>{belowCount}</Typography>
-                <Typography variant="caption">UPCs</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.6rem', whiteSpace: 'nowrap' }}>Proposed Margin</Typography>
+              <Box display="flex" alignItems="baseline">
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: hasPricingRule ? '#1a73e8' : 'inherit' }}>{proposedMargin}%</Typography>
+                <DeltaBadge current={parseFloat(proposedMargin)} baseline={parseFloat(avgMargin)} fmt={v => `${v > 0 ? '+' : ''}${Math.abs(v).toFixed(1)}%`} positiveIsGood={true} />
               </Box>
             </Box>
           </Paper>
         </Grid>
-        <Grid item xs={12} sm={6} md={2}>
-          <Paper
-            onClick={() => setMarketFilter(marketFilter === 'above' ? '' : 'above')}
-            sx={{
-              p: 2, display: 'flex', alignItems: 'center', gap: 2, bgcolor: '#fcfcfc', border: marketFilter === 'above' ? `2px solid ${theme.palette.error.main}` : '1px solid #eef0f2', borderRadius: '12px', cursor: 'pointer'
-            }}
-          >
-            <Avatar sx={{ bgcolor: 'rgba(220, 53, 69, 0.08)', color: '#dc3545' }}><TrendingUpIcon /></Avatar>
+        <Grid item xs={6} sm={3}>
+          <Paper onClick={() => setMarketFilter(marketFilter === 'below' ? '' : 'below')}
+            sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#fcfcfc', border: marketFilter === 'below' ? `2px solid ${theme.palette.success.main}` : '1px solid #eef0f2', borderRadius: '12px', cursor: 'pointer' }}>
+            <Avatar sx={{ bgcolor: 'rgba(40,167,69,0.08)', color: '#28a745', width: 34, height: 34 }}><TrendingDownIcon fontSize="small" /></Avatar>
             <Box>
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>Above Market</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.6rem', whiteSpace: 'nowrap' }}>Below Market</Typography>
               <Box display="flex" alignItems="baseline" gap={0.5}>
-                <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>{aboveCount}</Typography>
-                <Typography variant="caption">UPCs</Typography>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{liveMetrics.belowCount}</Typography>
+                <Typography variant="caption" sx={{ fontSize: '0.6rem' }}>UPCs</Typography>
+                <DeltaBadge current={liveMetrics.belowCount} baseline={baselineMetrics.belowCount} fmt={v => (v > 0 ? '+' : '') + Math.round(v)} positiveIsGood={true} />
               </Box>
             </Box>
           </Paper>
         </Grid>
-        <Grid item xs={12} sm={6} md={2}>
-          <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2, bgcolor: '#fcfcfc', border: '1px solid #eef0f2', borderRadius: '12px' }}>
-            <Avatar sx={{ bgcolor: 'rgba(255, 193, 7, 0.08)', color: '#ffc107' }}><WarningAmberIcon /></Avatar>
+        <Grid item xs={6} sm={3}>
+          <Paper onClick={() => setMarketFilter(marketFilter === 'above' ? '' : 'above')}
+            sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#fcfcfc', border: marketFilter === 'above' ? `2px solid ${theme.palette.error.main}` : '1px solid #eef0f2', borderRadius: '12px', cursor: 'pointer' }}>
+            <Avatar sx={{ bgcolor: 'rgba(220,53,69,0.08)', color: '#dc3545', width: 34, height: 34 }}><TrendingUpIcon fontSize="small" /></Avatar>
             <Box>
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>$ Total Below</Typography>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>${totalBelowMarketDollars.toFixed(2)}</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.6rem', whiteSpace: 'nowrap' }}>Above Market</Typography>
+              <Box display="flex" alignItems="baseline" gap={0.5}>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{liveMetrics.aboveCount}</Typography>
+                <Typography variant="caption" sx={{ fontSize: '0.6rem' }}>UPCs</Typography>
+                <DeltaBadge current={liveMetrics.aboveCount} baseline={baselineMetrics.aboveCount} fmt={v => (v > 0 ? '+' : '') + Math.round(v)} positiveIsGood={false} />
+              </Box>
             </Box>
           </Paper>
         </Grid>
-        <Grid item xs={12} sm={6} md={2}>
-          <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2, bgcolor: '#fcfcfc', border: '1px solid #eef0f2', borderRadius: '12px' }}>
-            <Avatar sx={{ bgcolor: 'rgba(255, 140, 0, 0.08)', color: '#ff8c00' }}><TrendingUpIcon /></Avatar>
+
+        {/* Row 2 */}
+        <Grid item xs={6} sm={3}>
+          <Paper sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#fcfcfc', border: '1px solid #eef0f2', borderRadius: '12px' }}>
+            <Avatar sx={{ bgcolor: 'rgba(40,167,69,0.08)', color: '#28a745', width: 34, height: 34 }}><TrendingDownIcon fontSize="small" /></Avatar>
             <Box>
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>% Total Below</Typography>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>{totalBelowMarketPct.toFixed(1)}%</Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.6rem', whiteSpace: 'nowrap' }}>$ Below Market</Typography>
+              <Box display="flex" alignItems="baseline">
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>${liveMetrics.dollarBelow.toFixed(2)}</Typography>
+                <DeltaBadge current={liveMetrics.dollarBelow} baseline={baselineMetrics.dollarBelow} fmt={v => `${v > 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`} positiveIsGood={true} />
+              </Box>
             </Box>
           </Paper>
         </Grid>
-        <Grid item xs={12} sm={6} md={2}>
-          <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2, bgcolor: '#fcfcfc', border: '1px solid #eef0f2', borderRadius: '12px' }}>
-            <Avatar sx={{ bgcolor: 'rgba(0, 123, 94, 0.08)', color: '#007b5e' }}><StyleIcon /></Avatar>
+        <Grid item xs={6} sm={3}>
+          <Paper sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#fcfcfc', border: '1px solid #eef0f2', borderRadius: '12px' }}>
+            <Avatar sx={{ bgcolor: 'rgba(40,167,69,0.08)', color: '#28a745', width: 34, height: 34 }}><TrendingDownIcon fontSize="small" /></Avatar>
             <Box>
-              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase' }}>Value Sum</Typography>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
-                {totalBiciValue > 1000 ? `$${(totalBiciValue / 1000).toFixed(1)}k` : `$${totalBiciValue.toFixed(0)}`}
-              </Typography>
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.6rem', whiteSpace: 'nowrap' }}>% Below Market</Typography>
+              <Box display="flex" alignItems="baseline">
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{liveMetrics.pctBelow.toFixed(1)}%</Typography>
+                <DeltaBadge current={liveMetrics.pctBelow} baseline={baselineMetrics.pctBelow} fmt={v => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`} positiveIsGood={true} />
+              </Box>
+            </Box>
+          </Paper>
+        </Grid>
+        <Grid item xs={6} sm={3}>
+          <Paper sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#fcfcfc', border: '1px solid #eef0f2', borderRadius: '12px' }}>
+            <Avatar sx={{ bgcolor: 'rgba(220,53,69,0.08)', color: '#dc3545', width: 34, height: 34 }}><TrendingUpIcon fontSize="small" /></Avatar>
+            <Box>
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.6rem', whiteSpace: 'nowrap' }}>$ Above Market</Typography>
+              <Box display="flex" alignItems="baseline">
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>${liveMetrics.dollarAbove.toFixed(2)}</Typography>
+                <DeltaBadge current={liveMetrics.dollarAbove} baseline={baselineMetrics.dollarAbove} fmt={v => `${v > 0 ? '+' : '-'}$${Math.abs(v).toFixed(2)}`} positiveIsGood={false} />
+              </Box>
+            </Box>
+          </Paper>
+        </Grid>
+        <Grid item xs={6} sm={3}>
+          <Paper sx={{ p: 1.75, display: 'flex', alignItems: 'center', gap: 1.5, bgcolor: '#fcfcfc', border: '1px solid #eef0f2', borderRadius: '12px' }}>
+            <Avatar sx={{ bgcolor: 'rgba(220,53,69,0.08)', color: '#dc3545', width: 34, height: 34 }}><TrendingUpIcon fontSize="small" /></Avatar>
+            <Box>
+              <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600, textTransform: 'uppercase', fontSize: '0.6rem', whiteSpace: 'nowrap' }}>% Above Market</Typography>
+              <Box display="flex" alignItems="baseline">
+                <Typography variant="subtitle2" sx={{ fontWeight: 700 }}>{liveMetrics.pctAbove.toFixed(1)}%</Typography>
+                <DeltaBadge current={liveMetrics.pctAbove} baseline={baselineMetrics.pctAbove} fmt={v => `${v > 0 ? '+' : ''}${v.toFixed(1)}%`} positiveIsGood={false} />
+              </Box>
             </Box>
           </Paper>
         </Grid>
       </Grid>
+
+      {/* Selection mode banner container — fixed height to prevent vertical jump */}
+      <Box sx={{ minHeight: '48px', mt: 1.5, mb: 1.5 }}>
+        {isSelectionMode && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1, bgcolor: '#e8f0fe', borderRadius: '10px', border: '1px solid #c5d8fb', animation: 'fadeIn 0.2s ease-in-out' }}>
+            <Typography variant="caption" sx={{ fontWeight: 700, color: '#1a73e8', fontSize: '0.65rem', letterSpacing: '0.5px' }}>SELECTION MODE</Typography>
+            <Typography variant="caption" sx={{ color: '#1a73e8', fontSize: '0.65rem' }}>— tiles reflect {selectedRows.size} selected row{selectedRows.size !== 1 ? 's' : ''}</Typography>
+            <Box flexGrow={1} />
+            <Button size="small" variant="text" sx={{ color: '#1a73e8', fontSize: '0.65rem', py: 0, minWidth: 0, fontWeight: 700, '&:hover': { bgcolor: 'transparent', textDecoration: 'underline' } }} onClick={() => setSelectedRows(new Set())}>Clear selection</Button>
+          </Box>
+        )}
+      </Box>
 
       {/* Main Table */}
       <TableContainer component={Paper} sx={{ boxShadow: 'none', border: '1px solid #eef0f2', borderRadius: '12px' }}>
@@ -616,14 +715,21 @@ const Products = () => {
           <TableHead>
             <TableRow>
               <TableCell padding="checkbox" sx={{ bgcolor: '#f8f9fa' }}>
-                <Checkbox
-                  size="small"
-                  indeterminate={selectedRows.size > 0 && selectedRows.size < filteredProducts.length}
-                  checked={filteredProducts.length > 0 && selectedRows.size === filteredProducts.length}
-                  onChange={handleSelectAllClick}
-                />
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  <Checkbox
+                    size="small"
+                    indeterminate={selectedRows.size > 0 && selectedRows.size < filteredProducts.length}
+                    checked={filteredProducts.length > 0 && selectedRows.size === filteredProducts.length}
+                    onChange={handleSelectAllClick}
+                  />
+                  {selectedRows.size > 0 && (
+                    <Typography variant="caption" sx={{ fontWeight: 700, color: '#1a73e8', fontSize: '0.65rem', lineHeight: 1 }}>
+                      {selectedRows.size}
+                    </Typography>
+                  )}
+                </Box>
               </TableCell>
-              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase' }}>
+              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
                 <TableSortLabel
                   active={sortField === 'upc'}
                   direction={sortField === 'upc' ? sortDirection : 'asc'}
@@ -632,7 +738,7 @@ const Products = () => {
                   UPC
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase' }}>
+              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
                 <TableSortLabel
                   active={sortField === 'product_name'}
                   direction={sortField === 'product_name' ? sortDirection : 'asc'}
@@ -641,7 +747,7 @@ const Products = () => {
                   Product
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase' }}>
+              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
                 <TableSortLabel
                   active={sortField === 'category_main'}
                   direction={sortField === 'category_main' ? sortDirection : 'asc'}
@@ -650,16 +756,16 @@ const Products = () => {
                   Category
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase' }}>
+              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
                 <TableSortLabel
-                  active={sortField === 'avg_margin_pct'}
-                  direction={sortField === 'avg_margin_pct' ? sortDirection : 'asc'}
-                  onClick={() => handleRequestSort('avg_margin_pct')}
+                  active={sortField === 'prospective_margin_pct'}
+                  direction={sortField === 'prospective_margin_pct' ? sortDirection : 'asc'}
+                  onClick={() => handleRequestSort('prospective_margin_pct')}
                 >
                   Margin
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#007b5e', textTransform: 'uppercase' }}>
+              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#007b5e', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
                 <TableSortLabel
                   active={sortField === 'our_price'}
                   direction={sortField === 'our_price' ? sortDirection : 'asc'}
@@ -668,13 +774,13 @@ const Products = () => {
                   Bici
                 </TableSortLabel>
               </TableCell>
-              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#1a73e8', textTransform: 'uppercase' }}>Benchmark</TableCell>
+              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#1a73e8', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Benchmark</TableCell>
               {TARGET_COMPETITORS.map(comp => (
-                <TableCell key={comp} sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase' }}>
+                <TableCell key={comp} sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
                   {comp.split('.')[0].toUpperCase()}
                 </TableCell>
               ))}
-              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#007b5e', textTransform: 'uppercase' }}>Change Result</TableCell>
+              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#007b5e', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Change Result</TableCell>
               <TableCell sx={{ bgcolor: '#f8f9fa' }} />
             </TableRow>
           </TableHead>
@@ -699,20 +805,14 @@ const Products = () => {
                   </TableCell>
                   <TableCell sx={{ py: 1.5, fontWeight: 600 }}>{product.upc}</TableCell>
                   <TableCell sx={{ fontWeight: 500, maxWidth: 400 }}>{product.product_name}</TableCell>
-                  <TableCell>
-                    <Chip
-                      label={product.category_main}
-                      size="small"
-                      sx={{
-                        bgcolor: getCategoryColor(product.category_main).bg,
-                        color: getCategoryColor(product.category_main).text,
-                        fontWeight: 600,
-                        borderRadius: '6px'
-                      }}
-                    />
+                  <TableCell sx={{ py: 1.5, color: 'text.secondary', whiteSpace: 'nowrap' }}>
+                    <Box display="flex" flexDirection="column">
+                      <Typography variant="body2">{product.category_main}</Typography>
+                      <Typography variant="caption" color="text.secondary">{product.subcategory_1}</Typography>
+                    </Box>
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 600, color: 'text.secondary' }}>
-                    {product.avg_margin_pct !== undefined && product.avg_margin_pct !== null ? `${product.avg_margin_pct}%` : '—'}
+                  <TableCell sx={{ py: 1.5 }}>
+                    {product.prospective_margin_pct !== undefined && product.prospective_margin_pct !== null ? `${product.prospective_margin_pct}%` : '—'}
                   </TableCell>
                   <TableCell sx={{ fontWeight: 700 }}>
                     ${Number(product.our_price).toFixed(2)}
