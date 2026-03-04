@@ -10,12 +10,7 @@ services:
     staticPublishPath: dist
     envVars:
       - key: VITE_API_URL
-        # This dynamically references the internal URL of the backend service defined below.
-        # Once both are deployed, this allows the React app to hit the live API.
-        fromService:
-          name: price-intelligence-backend
-          type: web
-          property: url
+        value: https://price-intelligence-backend.onrender.com
 
   # ==================================
   # BACKEND (Python / FastAPI)
@@ -30,10 +25,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: FRONTEND_URL
-        fromService:
-          name: price-intelligence-frontend
-          type: web
-          property: url
+        value: https://price-intelligence-frontend.onrender.com
       # Add placeholders for Secrets that you will populate manually in the Render dashboard
       - key: GOOGLE_CLIENT_ID
         sync: false
