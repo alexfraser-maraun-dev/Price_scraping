@@ -1,8 +1,9 @@
 # Environment variables
 .env
 
-# Google Cloud Service Account Keys
-*.json
+# Google Cloud Service Account Keys (exclude specific credential files only)
+*-credentials.json
+bici-*.json
 
 # Python
 __pycache__/
