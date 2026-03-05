@@ -28,7 +28,7 @@ services:
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: FRONTEND_URL
-        value: https://price-intelligence-frontend.onrender.com
+        value: https://price-intelligence-frontend-uyvg.onrender.com
       # Add placeholders for Secrets that you will populate manually in the Render dashboard
       - key: GOOGLE_CLIENT_ID
         sync: false
