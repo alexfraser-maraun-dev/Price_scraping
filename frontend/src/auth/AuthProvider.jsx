@@ -33,7 +33,8 @@ export const AuthProvider = ({ children }) => {
 
     const login = () => {
         const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-        window.location.href = `${baseUrl}/auth/login`;
+        const returnTo = window.location.origin + '/';
+        window.location.href = `${baseUrl}/auth/login?return_to=${encodeURIComponent(returnTo)}`;
     };
 
     const logout = async () => {
