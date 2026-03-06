@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Paper, Typography, Button } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../auth/AuthProvider';
+import Logo from '../components/Logo';
 
 const Login = () => {
     const theme = useTheme();
@@ -21,11 +22,15 @@ const Login = () => {
                 width: '100%',
                 border: '1px solid #eef0f2',
                 borderRadius: '16px',
-                textAlign: 'center'
+                textAlign: 'center',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center'
             }}>
-                <Typography variant="h4" sx={{ fontWeight: 800, color: '#1a1a1a', letterSpacing: '-0.02em', mb: 1 }}>
-                    Bici Price Intelligence
-                </Typography>
+                <Box sx={{ mb: 4 }}>
+                    <Logo />
+                </Box>
+
                 <Typography variant="body2" sx={{ color: '#5f6368', mb: 4 }}>
                     Please sign in with your corporate Google workspace account to continue.
                 </Typography>
