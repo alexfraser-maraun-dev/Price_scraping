@@ -188,12 +188,12 @@ async def get_product_comparisons(user: dict = Depends(require_auth)):
         print("Starting BigQuery fetch...")
         bq_start = time.time()
         query_job = bq_client.query(sql)
-        results = query_job.result()
-        print(f"BigQuery fetch took {time.time() - bq_start:.2f} seconds.")
+        results = list(query_job.result())
+        print(f"BigQuery fetch took {time.time() - bq_start:.2f} seconds. Found {len(results)} rows.")
         
         # 2. Fetch Price Insights from Merchant API
         merchant_id = os.getenv("MERCHANT_ID", "")
-        insights = await get_price_insights(merchant_id)
+        insights: dict = await get_price_insights(merchant_id)
         
         products = []
         for row in results:
