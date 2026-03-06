@@ -22,7 +22,12 @@ merchant_creds_path = os.getenv("MERCHANT_APPLICATION_CREDENTIALS")
 
 app = FastAPI(title="Price Comparison API")
 
-app.add_middleware(SessionMiddleware, secret_key=os.environ.get("SESSION_SECRET", "super-secret-default-key-change-in-prod"))
+app.add_middleware(
+    SessionMiddleware, 
+    secret_key=os.environ.get("SESSION_SECRET", "super-secret-default-key-change-in-prod"),
+    same_site="none",
+    https_only=True
+)
 
 frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")
 
