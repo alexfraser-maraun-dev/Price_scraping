@@ -31,8 +31,9 @@ const Login = () => {
                     <Logo />
                 </Box>
 
-                <Typography variant="body2" sx={{ color: '#5f6368', mb: 4 }}>
-                    Please sign in with your corporate Google workspace account to continue.
+                <Typography variant="body2" sx={{ color: '#5f6368', mb: 3 }}>
+                    This is an internal business tool for <strong>BICI Pulse</strong>.
+                    Please sign in with your corporate Google Workspace account to continue.
                 </Typography>
 
                 <Button
@@ -49,6 +50,7 @@ const Login = () => {
                         fontWeight: 600,
                         borderRadius: '10px',
                         boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+                        mb: 4,
                         '&:hover': {
                             bgcolor: '#f8f9fa',
                             boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
@@ -65,6 +67,17 @@ const Login = () => {
                 >
                     Sign in with Google
                 </Button>
+
+                <Divider sx={{ width: '100%', mb: 3, opacity: 0.5 }} />
+
+                <Box sx={{ color: '#9aa0a6' }}>
+                    <Typography variant="caption" display="block">
+                        <strong>Security Note:</strong> This application uses secure Google OAuth 2.0.
+                    </Typography>
+                    <Typography variant="caption" display="block" sx={{ mt: 1 }}>
+                        Internal Access Only • © 2026 BICI Pulse
+                    </Typography>
+                </Box>
             </Paper>
         </Box>
     );
