@@ -107,7 +107,8 @@ const Products = () => {
   const fetchProducts = async () => {
     setLoading(true);
     try {
-      const response = await axios.get('http://localhost:8000/api/products');
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await axios.get(`${baseUrl}/api/products`);
       setProducts(response.data);
       setError(null);
     } catch (err) {
@@ -205,7 +206,8 @@ const Products = () => {
 
     try {
       // Re-fetch products from the backend (which hits the Merchant API)
-      const response = await axios.get('http://localhost:8000/api/products');
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await axios.get(`${baseUrl}/api/products`);
       setProducts(response.data);
       setScrapeProgress(100);
       setError(null);
