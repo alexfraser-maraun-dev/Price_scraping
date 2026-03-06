@@ -113,7 +113,8 @@ const Products = () => {
       setError(null);
     } catch (err) {
       console.error('Failed to fetch data:', err);
-      setError('Backend not connected. Showing mock data for UI testing.');
+      const msg = err.response?.data?.detail || err.message;
+      setError(`API Error (${err.response?.status || 'Network'}): ${msg}. Showing mock data for UI testing.`);
       setProducts(mockData);
     } finally {
       setLoading(false);
@@ -213,7 +214,8 @@ const Products = () => {
       setError(null);
     } catch (err) {
       console.error('Failed to run scrape:', err);
-      setError('Failed to fetch updated scrape data.');
+      const msg = err.response?.data?.detail || err.message;
+      setError(`Scrape failed (${err.response?.status || 'Network'}): ${msg}`);
     } finally {
       setTimeout(() => {
         setIsScraping(false);
