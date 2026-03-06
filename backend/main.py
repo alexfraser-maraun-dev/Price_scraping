@@ -89,6 +89,16 @@ try:
 except Exception as e:
     print(f"Error initializing Merchant API client: {e}")
 
+@app.get("/api/health")
+async def health_check():
+    return {
+        "bigquery_ready": bq_client is not None,
+        "merchant_ready": merchant_report_client is not None,
+        "merchant_id": os.getenv("MERCHANT_ID"),
+        "bq_creds_path": bq_creds_path,
+        "merchant_creds_path": merchant_creds_path
+    }
+
 def get_product_source_sql():
     path = os.path.join(os.path.dirname(__file__), '..', 'product_source.sql')
     if os.path.exists(path):
