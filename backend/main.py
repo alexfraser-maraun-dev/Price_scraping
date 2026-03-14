@@ -26,7 +26,7 @@ app.add_middleware(
     SessionMiddleware, 
     secret_key=os.environ.get("SESSION_SECRET", "super-secret-default-key-change-in-prod"),
     same_site="none",
-    https_only=True
+    https_only=os.environ.get("SESSION_HTTPS_ONLY", "True").lower() == "true"
 )
 
 frontend_url = os.environ.get("FRONTEND_URL", "http://localhost:5173")

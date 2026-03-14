@@ -1,5 +1,5 @@
 import React from 'react';
-import { Box, Paper, Typography, Button } from '@mui/material';
+import { Box, Paper, Typography, Button, Divider } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { useAuth } from '../auth/AuthProvider';
 import Logo from '../components/Logo';
