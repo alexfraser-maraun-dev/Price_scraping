@@ -35,10 +35,7 @@ const mockData = [
     brand_name: "Shimano", category_main: "Electrical",
     subcategory_1: "Drivetrain", subcategory_2: "Derailleurs",
     competitors: [
-      { business_name: "Primeau Velo", url: "primeauvelo.com", price: 92.40, price_diff_pct: 3.8 },
-      { business_name: "Enroute", url: "enroute.cc", price: 95.00, price_diff_pct: 6.7 },
-      { business_name: "The Bike Shop", url: "thebikeshop.com", price: 88.50, price_diff_pct: -0.6 },
-      { business_name: "Steed Cycles", url: "steedcycles.com", price: 91.75, price_diff_pct: 3.1 }
+      { business_name: "Google Benchmark", url: "", price: 92.40, price_diff_pct: 3.8 }
     ]
   },
   {
@@ -48,7 +45,7 @@ const mockData = [
     brand_name: "SRAM", category_main: "Electrical",
     subcategory_1: "Lighting", subcategory_2: "Panels",
     competitors: [
-      { business_name: "Primeau Velo", url: "primeauvelo.com", price: 58.50, price_diff_pct: 8.3 }
+      { business_name: "Google Benchmark", url: "", price: 58.50, price_diff_pct: 8.3 }
     ]
   },
   {
@@ -58,17 +55,9 @@ const mockData = [
     brand_name: "Shimano", category_main: "Fasteners",
     subcategory_1: "Brakes", subcategory_2: "Brake Pads",
     competitors: [
-      { business_name: "Primeau Velo", url: "primeauvelo.com", price: 45.99, price_diff_pct: 8.2 },
-      { business_name: "Enroute", url: "enroute.cc", price: 41.20, price_diff_pct: -3.1 }
+      { business_name: "Google Benchmark", url: "", price: 45.99, price_diff_pct: 8.2 }
     ]
   }
-];
-
-const TARGET_COMPETITORS = [
-  "primeauvelo.com",
-  "enroute.cc",
-  "thebikeshop.com",
-  "steedcycles.com"
 ];
 
 const Products = () => {
@@ -437,11 +426,9 @@ const Products = () => {
 
   const ruleOptions = [
     { value: 'none', label: 'No Rule' },
-    { value: 'match_lowest', label: 'Match Lowest Competitor' },
-    { value: 'undercut_lowest', label: 'Undercut Lowest by 1%' },
-    { value: 'match_average', label: 'Match Market Average' },
-    { value: 'beat_average', label: 'Beat Average by 2%' },
-    { value: 'match_highest', label: 'Match Highest Competitor' },
+    { value: 'match_lowest', label: 'Match Benchmark' },
+    { value: 'undercut_lowest', label: 'Undercut Benchmark by 1%' },
+    { value: 'beat_average', label: 'Beat Benchmark by 2%' },
   ];
 
   if (loading && products.length === 0) {
@@ -779,12 +766,7 @@ const Products = () => {
                 </TableSortLabel>
               </TableCell>
               <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#1a73e8', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Benchmark</TableCell>
-              {TARGET_COMPETITORS.map(comp => (
-                <TableCell key={comp} sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
-                  {comp.split('.')[0].toUpperCase()}
-                </TableCell>
-              ))}
-              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#007b5e', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Change Result</TableCell>
+              <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#007b5e', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>New Price</TableCell>
               <TableCell sx={{ bgcolor: '#f8f9fa' }} />
             </TableRow>
           </TableHead>
@@ -847,37 +829,7 @@ const Products = () => {
                       );
                     })()}
                   </TableCell>
-                  {TARGET_COMPETITORS.map(domain => {
-                    const comp = product.competitors?.find(c => c.url.includes(domain));
-                    const isLower = comp && comp.price < product.our_price;
-                    const isHigher = comp && comp.price > product.our_price;
-                    return (
-                      <TableCell key={domain}>
-                        {comp ? (
-                          <Box display="flex" alignItems="center" gap={1}>
-                            <Typography variant="body2" sx={{ fontWeight: 600, color: isLower ? '#28a745' : 'inherit' }}>
-                              ${Number(comp.price).toFixed(2)}
-                            </Typography>
-                            {comp.price_diff_pct !== 0 && (
-                              <Typography
-                                variant="caption"
-                                sx={{
-                                  color: isHigher ? '#dc3545' : '#28a745',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  fontWeight: 700
-                                }}
-                              >
-                                {isHigher ? '↑' : '↓'}{Math.abs(comp.price_diff_pct).toFixed(1)}%
-                              </Typography>
-                            )}
-                          </Box>
-                        ) : (
-                          <Typography variant="caption" color="text.disabled">—</Typography>
-                        )}
-                      </TableCell>
-                    );
-                  })}
+
                   <TableCell>
                     {suggested !== null ? (
                       <Box display="flex" alignItems="center" gap={1}>
