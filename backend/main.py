@@ -58,8 +58,10 @@ class ProductComparison(BaseModel):
     subcategory_2: Optional[str]
     current_cost: Optional[float]
     our_price: float
-    total_revenue: float
+    total_revenue: float          # weekly revenue from sales_master_view
+    weekly_units: Optional[int]
     prospective_margin_pct: Optional[float]
+    qualifying_buckets: Optional[str]  # comma-separated list of buckets this SKU qualified through
     competitors: List[CompetitorPrice]
 
 # Include the Auth Router
@@ -210,7 +212,9 @@ async def get_product_comparisons(user: dict = Depends(require_auth)):
                 current_cost=float(row.current_cost) if row.current_cost is not None else None,
                 our_price=float(row.current_default_price) if row.current_default_price is not None else 0.0,
                 total_revenue=float(row.total_revenue) if row.total_revenue is not None else 0.0,
+                weekly_units=int(row.weekly_units) if row.weekly_units is not None else None,
                 prospective_margin_pct=float(row.prospective_margin_pct) if row.prospective_margin_pct is not None else None,
+                qualifying_buckets=str(row.qualifying_buckets) if row.qualifying_buckets else None,
                 competitors=[]
             )
             

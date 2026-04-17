@@ -12,6 +12,7 @@ const Layout = () => {
     const isMobile = useMediaQuery(theme.breakpoints.down('md'));
     const [isCollapsed, setIsCollapsed] = React.useState(false);
     const [mobileOpen, setMobileOpen] = React.useState(false);
+    const [activeBucket, setActiveBucket] = React.useState('all');
     const { user, loading } = useAuth();
 
     if (loading) {
@@ -33,12 +34,14 @@ const Layout = () => {
                 onToggle={() => setIsCollapsed(!isCollapsed)}
                 mobileOpen={mobileOpen}
                 onMobileClose={() => setMobileOpen(false)}
+                activeBucket={activeBucket}
+                onBucketChange={setActiveBucket}
             />
             <Box sx={{
                 flexGrow: 1,
                 display: 'flex',
                 flexDirection: 'column',
-                minWidth: 0 // Prevent content from overflowing
+                minWidth: 0
             }}>
                 {isMobile && (
                     <Box sx={{ p: 2, display: 'flex', alignItems: 'center', borderBottom: '1px solid #eef0f2' }}>
@@ -47,7 +50,8 @@ const Layout = () => {
                         </IconButton>
                     </Box>
                 )}
-                <Outlet />
+                {/* Pass activeBucket down to child routes via context prop on Outlet */}
+                <Outlet context={{ activeBucket }} />
             </Box>
         </Box>
     );

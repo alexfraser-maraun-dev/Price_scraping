@@ -7,7 +7,8 @@ import {
   Autocomplete, Switch, FormControlLabel
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useOutletContext } from 'react-router-dom';
+import { BUCKET_ITEMS } from '../components/Sidebar';
 import DownloadIcon from '@mui/icons-material/Download';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import SearchIcon from '@mui/icons-material/Search';
@@ -66,6 +67,10 @@ const Products = () => {
   const fileInputRef = useRef(null);
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
+
+  // Bucket filter from sidebar
+  const { activeBucket = 'all' } = useOutletContext() || {};
+  const activeBucketLabel = BUCKET_ITEMS.find(b => b.key === activeBucket)?.label || 'Products';
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
   const [isScraping, setIsScraping] = useState(false);
@@ -243,12 +248,12 @@ const Products = () => {
   };
 
   const filterOptions = useMemo(() => {
-    const cats = [...new Set(products.map(p => p.category_main).filter(Boolean))].sort();
-    const sub1s = [...new Set(products.map(p => p.subcategory_1).filter(Boolean))].sort();
-    const sub2s = [...new Set(products.map(p => p.subcategory_2).filter(Boolean))].sort();
-    const brands = [...new Set(products.map(p => p.brand_name).filter(Boolean))].sort();
+    const cats = [...new Set(bucketFilteredProducts.map(p => p.category_main).filter(Boolean))].sort();
+    const sub1s = [...new Set(bucketFilteredProducts.map(p => p.subcategory_1).filter(Boolean))].sort();
+    const sub2s = [...new Set(bucketFilteredProducts.map(p => p.subcategory_2).filter(Boolean))].sort();
+    const brands = [...new Set(bucketFilteredProducts.map(p => p.brand_name).filter(Boolean))].sort();
     return { cats, sub1s, sub2s, brands };
-  }, [products]);
+  }, [bucketFilteredProducts]);
 
   const getAvgCompPrice = (p) => {
     const compPrices = p.competitors?.map(c => c.price).filter(Boolean) || [];
@@ -289,8 +294,17 @@ const Products = () => {
 
   const hasPricingRule = pricingRule !== 'none' || pctChange || dollarChange;
 
+  // 1. Apply bucket filter first
+  const bucketFilteredProducts = useMemo(() => {
+    if (activeBucket === 'all') return products;
+    return products.filter(p =>
+      p.qualifying_buckets?.split(',').map(s => s.trim()).includes(activeBucket)
+    );
+  }, [products, activeBucket]);
+
+  // 2. Apply search + column filters on top
   const filteredProducts = useMemo(() => {
-    let result = products.filter(p => {
+    let result = bucketFilteredProducts.filter(p => {
       const matchesSearch = !search ||
         p.product_name?.toLowerCase().includes(search.toLowerCase()) ||
         p.upc?.toLowerCase().includes(search.toLowerCase());
@@ -308,14 +322,12 @@ const Products = () => {
       let aVal = a[sortField];
       let bVal = b[sortField];
 
-      // Handle numeric fields
       if (['our_price', 'prospective_margin_pct', 'total_revenue'].includes(sortField)) {
         aVal = parseFloat(aVal) || 0;
         bVal = parseFloat(bVal) || 0;
         return sortDirection === 'asc' ? aVal - bVal : bVal - aVal;
       }
 
-      // Default string comparison
       aVal = String(aVal || '').toLowerCase();
       bVal = String(bVal || '').toLowerCase();
 
@@ -323,7 +335,7 @@ const Products = () => {
       if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [products, search, filterCategory, filterSubcat1, filterSubcat2, filterBrand, marketFilter, showOnlyBenchmarked, sortField, sortDirection]);
+  }, [bucketFilteredProducts, search, filterCategory, filterSubcat1, filterSubcat2, filterBrand, marketFilter, showOnlyBenchmarked, sortField, sortDirection]);
 
   const getCategoryColor = (cat) => {
     const colors = {
@@ -441,7 +453,7 @@ const Products = () => {
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={4}>
         <Box display="flex" alignItems="center" gap={2}>
           <Typography variant="h5" sx={{ fontWeight: 800, color: '#1a1a1a', letterSpacing: '-0.02em', mr: 2 }}>
-            Products
+            {activeBucketLabel}
           </Typography>
           <Chip
             label={`${filteredProducts.length} UPCs`}
