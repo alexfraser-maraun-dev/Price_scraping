@@ -6,6 +6,7 @@ import Reports from './pages/Reports';
 import Login from './pages/Login';
 import { AuthProvider } from './auth/AuthProvider';
 import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
+import ErrorBoundary from './components/ErrorBoundary';
 
 // --- Premium Light Theme Configuration (v2) ---
 const lightTheme = createTheme({
@@ -108,14 +109,16 @@ const App = () => {
     return (
         <ThemeProvider theme={lightTheme}>
             <CssBaseline />
-            <AuthProvider>
-                <Routes>
-                    <Route path="/" element={<Layout />}>
-                        <Route index element={<Products />} />
-                        <Route path="reports" element={<Reports />} />
-                    </Route>
-                </Routes>
-            </AuthProvider>
+            <ErrorBoundary>
+                <AuthProvider>
+                    <Routes>
+                        <Route path="/" element={<Layout />}>
+                            <Route index element={<Products />} />
+                            <Route path="reports" element={<Reports />} />
+                        </Route>
+                    </Routes>
+                </AuthProvider>
+            </ErrorBoundary>
         </ThemeProvider>
     );
 };
