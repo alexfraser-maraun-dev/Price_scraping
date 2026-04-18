@@ -50,8 +50,8 @@ const Layout = () => {
                         </IconButton>
                     </Box>
                 )}
-                {/* Pass activeBucket down to child routes via context prop on Outlet */}
-                <Outlet context={{ activeBucket }} />
+                {/* Pass activeBucket and navigation down to child routes */}
+                <Outlet context={{ activeBucket, onBucketChange: setActiveBucket }} />
             </Box>
         </Box>
     );

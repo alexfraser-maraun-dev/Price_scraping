@@ -249,6 +249,103 @@ async def get_product_comparisons(user: dict = Depends(require_auth)):
         print(f"Error in /api/products: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/products/refresh")
+async def refresh_products():
+    """Explicit endpoint to re-run the full baseline query."""
+    return await get_products()
+
+@app.get("/api/products/search")
+async def search_products(q: str):
+    """Manually query BigQuery for specific products."""
+    if not bq_client:
+        raise HTTPException(status_code=500, detail="BigQuery client not initialized")
+
+    # Use a faster, targeted search query
+    sql = f"""
+    WITH latest_items AS (
+      SELECT
+        id, system_sku, custom_sku, description, upc, manufacturer_id, category_id,
+        CAST(avg_cost AS FLOAT64) as current_cost
+      FROM `bici-klaviyo-datasync.light_speed_retailne.item_history`
+      WHERE 
+        LOWER(description) LIKE @q OR
+        upc = @raw_q OR
+        CAST(id AS STRING) = @raw_q OR
+        CAST(system_sku AS STRING) = @raw_q
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY updated_time DESC) = 1
+      LIMIT 100
+    ),
+    latest_brands AS (
+      SELECT id, name FROM `bici-klaviyo-datasync.light_speed_retailne.manufacturer_history`
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY id ORDER BY updated_time DESC) = 1
+    ),
+    latest_prices AS (
+      SELECT item_id, CAST(amount AS FLOAT64) as price FROM `bici-klaviyo-datasync.light_speed_retailne.item_price_history`
+      WHERE use_type = 'Default'
+      QUALIFY ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY item_updated_time DESC) = 1
+    )
+    SELECT 
+      i.id as item_id, i.system_sku, i.custom_sku, i.description as product_name, i.upc,
+      b.name as brand_name, p.price as current_default_price, i.current_cost
+    FROM latest_items i
+    LEFT JOIN latest_brands b ON i.manufacturer_id = b.id
+    LEFT JOIN latest_prices p ON i.id = p.item_id
+    """
+
+    job_config = bigquery.QueryJobConfig(
+        query_parameters=[
+            bigquery.ScalarQueryParameter("q", "STRING", f"%{q.lower()}%"),
+            bigquery.ScalarQueryParameter("raw_q", "STRING", q),
+        ]
+    )
+
+    try:
+        query_job = bq_client.query(sql, job_config=job_config)
+        results = list(query_job.result())
+        
+        # Map to model (similar to get_products but simplified)
+        merchant_id = os.getenv("MERCHANT_ID", "")
+        insights = await get_price_insights(merchant_id)
+        
+        products = []
+        for row in results:
+            product = ProductComparison(
+                item_id=int(row.item_id) if row.item_id else None,
+                system_sku=str(row.system_sku) if row.system_sku else "",
+                custom_sku=str(row.custom_sku) if row.custom_sku else None,
+                upc=str(row.upc) if row.upc else None,
+                product_name=row.product_name,
+                brand_name=row.brand_name,
+                category_main=None, # Search doesn't do the recursive cat walk for speed
+                subcategory_1=None,
+                subcategory_2=None,
+                current_cost=float(row.current_cost) if row.current_cost is not None else None,
+                our_price=float(row.current_default_price) if row.current_default_price is not None else 0.0,
+                total_revenue=0.0,
+                weekly_units=0,
+                prospective_margin_pct=None,
+                qualifying_buckets="search_result",
+                competitors=[]
+            )
+            
+            # Map insights
+            if product.upc:
+                clean_upc = str(product.upc).lstrip('0')
+                if clean_upc in insights:
+                    matched = insights[clean_upc]
+                    if matched.get('benchmark_price_micros'):
+                        product.competitors.append(CompetitorPrice(
+                            business_name="Google Benchmark",
+                            price=float(matched['benchmark_price_micros']) / 1_000_000,
+                            price_diff_pct=float(matched.get('price_diff_pct', 0)) * 100
+                        ))
+            products.append(product)
+            
+        return products
+    except Exception as e:
+        print(f"Search Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -35,6 +35,7 @@ export const BUCKET_ITEMS = [
   { key: 'top_200_lowest_margin_weekly',    label: 'Lowest Margin (Weekly)',    icon: <PercentIcon /> },
   { key: 'top_200_sellthrough_30d_high',    label: 'Top Sellthrough (30d)',     icon: <SpeedIcon /> },
   { key: 'bottom_200_sellthrough_30d_low',  label: 'Low Sellthrough (30d)',     icon: <SnailIcon /> },
+  { key: 'search_result',                   label: 'Search Results',            icon: <SearchIcon /> },
 ];
 
 const Sidebar = ({ isCollapsed, onToggle, mobileOpen, onMobileClose, activeBucket, onBucketChange }) => {

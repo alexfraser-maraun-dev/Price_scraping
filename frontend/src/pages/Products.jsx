@@ -4,7 +4,8 @@ import {
   Alert, Button, TextField, Chip, Checkbox, Table, TableBody,
   TableCell, TableContainer, TableHead, TableRow, TableSortLabel,
   MenuItem, Select, FormControl, InputLabel, Divider, Grid, Avatar,
-  Autocomplete, Switch, FormControlLabel
+  Autocomplete, Switch, FormControlLabel, InputAdornment, Stack, Dialog,
+  DialogTitle, DialogContent, DialogActions, List, ListItem, ListItemText
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import { useNavigate, useOutletContext } from 'react-router-dom';
@@ -24,6 +25,9 @@ import SouthIcon from '@mui/icons-material/South';
 import StyleIcon from '@mui/icons-material/Style';
 import IconButton from '@mui/material/IconButton';
 import Tooltip from '@mui/material/Tooltip';
+import StorageIcon from '@mui/icons-material/Storage';
+import AddIcon from '@mui/icons-material/Add';
+import CloseIcon from '@mui/icons-material/Close';
 import axios from 'axios';
 import Logo from '../components/Logo';
 
@@ -69,7 +73,7 @@ const Products = () => {
   const [loading, setLoading] = useState(true);
 
   // Bucket filter from sidebar
-  const { activeBucket = 'all' } = useOutletContext() || {};
+  const { activeBucket = 'all', onBucketChange } = useOutletContext() || {};
   const activeBucketLabel = BUCKET_ITEMS.find(b => b.key === activeBucket)?.label || 'Products';
   const [error, setError] = useState(null);
   const [search, setSearch] = useState('');
@@ -81,6 +85,12 @@ const Products = () => {
   const [pricingRule, setPricingRule] = useState('none');
   const [pctChange, setPctChange] = useState('');
   const [dollarChange, setDollarChange] = useState('');
+
+  // Remote Search State
+  const [searchDialogOpen, setSearchDialogOpen] = useState(false);
+  const [remoteSearchQuery, setRemoteSearchQuery] = useState('');
+  const [remoteSearching, setRemoteSearching] = useState(false);
+  const [remoteResults, setRemoteResults] = useState([]);
 
   // Sort/Filter state
   const [sortField, setSortField] = useState('upc');
@@ -98,11 +108,12 @@ const Products = () => {
     setSortField(property);
   };
 
-  const fetchProducts = async () => {
+  const fetchProducts = async (isRefresh = false) => {
     setLoading(true);
     try {
       const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
-      const response = await axios.get(`${baseUrl}/api/products`);
+      const endpoint = isRefresh ? '/api/products/refresh' : '/api/products';
+      const response = await axios.get(`${baseUrl}${endpoint}`);
       setProducts(response.data);
       setError(null);
     } catch (err) {
@@ -113,6 +124,34 @@ const Products = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleRemoteSearch = async () => {
+    if (!remoteSearchQuery.trim()) return;
+    setRemoteSearching(true);
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await axios.get(`${baseUrl}/api/products/search?q=${encodeURIComponent(remoteSearchQuery)}`);
+      setRemoteResults(response.data);
+    } catch (err) {
+      console.error('Remote search failed:', err);
+    } finally {
+      setRemoteSearching(false);
+    }
+  };
+
+  const addSearchedProduct = (product) => {
+    // Check if product already exists in state
+    setProducts(prev => {
+      if (prev.some(p => p.system_sku === product.system_sku)) {
+        return prev;
+      }
+      return [product, ...prev];
+    });
+    setSearchDialogOpen(false);
+    setRemoteSearchQuery('');
+    setRemoteResults([]);
+    if (onBucketChange) onBucketChange('search_result');
   };
 
   useEffect(() => {
@@ -466,9 +505,6 @@ const Products = () => {
               sx={{ bgcolor: '#e8f0fe', fontWeight: 600, color: '#1a73e8', borderRadius: '8px' }}
             />
           )}
-          <Typography variant="body2" color="text.secondary" sx={{ opacity: 0.6, ml: 1 }}>
-            Last scrape: Today, 08:30 AM
-          </Typography>
         </Box>
 
         <Box display="flex" gap={1.5}>
@@ -483,6 +519,14 @@ const Products = () => {
           </Button>
           <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExportCSV} sx={{ color: 'text.primary', borderColor: '#eef0f2' }}>
             Export CSV
+          </Button>
+          <Button 
+            variant="outlined" 
+            startIcon={<StorageIcon />} 
+            onClick={() => fetchProducts(true)} 
+            sx={{ color: 'text.primary', borderColor: '#eef0f2' }}
+          >
+            Sync Database
           </Button>
           <Button
             variant="contained"
@@ -500,6 +544,41 @@ const Products = () => {
             {isScraping ? 'Scraping...' : 'Run Scrape'}
           </Button>
         </Box>
+      </Box>
+
+      {/* Action Bar */}
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3} gap={2}>
+        <Stack direction="row" spacing={1.5} flexGrow={1} maxWidth={1000}>
+          <TextField
+            placeholder="Search local products..."
+            size="small"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            sx={{
+              width: 300,
+              '& .MuiOutlinedInput-root': {
+                borderRadius: '10px',
+                bgcolor: '#f8f9fa',
+                '& fieldset': { borderColor: '#eef0f2' },
+              }
+            }}
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon size="small" sx={{ color: '#9aa0a6' }} />
+                </InputAdornment>
+              ),
+            }}
+          />
+          <Button
+            variant="outlined"
+            startIcon={<SearchIcon />}
+            onClick={() => setSearchDialogOpen(true)}
+            sx={{ borderRadius: '10px', textTransform: 'none', borderColor: '#eef0f2', color: 'text.primary' }}
+          >
+            Search BigQuery
+          </Button>
+        </Stack>
       </Box>
 
       {isScraping && (
@@ -868,6 +947,91 @@ const Products = () => {
           </TableBody>
         </Table>
       </TableContainer>
+      {/* BigQuery Search Dialog */}
+      <Dialog 
+        open={searchDialogOpen} 
+        onClose={() => setSearchDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: '16px' } }}
+      >
+        <DialogTitle sx={{ fontWeight: 800, pb: 1 }}>
+          Search BigQuery
+          <Typography variant="body2" color="text.secondary">
+            Query the master database by Description, UPC, Brand, or Item ID.
+          </Typography>
+        </DialogTitle>
+        <DialogContent sx={{ minHeight: '400px' }}>
+          <Box sx={{ mt: 1, mb: 3 }}>
+            <TextField
+              fullWidth
+              autoFocus
+              placeholder="Enter search terms..."
+              value={remoteSearchQuery}
+              onChange={(e) => setRemoteSearchQuery(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleRemoteSearch()}
+              InputProps={{
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Button 
+                      variant="contained" 
+                      onClick={handleRemoteSearch} 
+                      disabled={remoteSearching}
+                      sx={{ bgcolor: '#007b5e', '&:hover': { bgcolor: '#00634b' } }}
+                    >
+                      {remoteSearching ? <CircularProgress size={20} color="inherit" /> : 'Query'}
+                    </Button>
+                  </InputAdornment>
+                ),
+              }}
+            />
+          </Box>
+
+          <List sx={{ bgcolor: '#f8f9fa', borderRadius: '12px', overflow: 'hidden' }}>
+            {remoteResults.length === 0 && !remoteSearching && (
+              <Box sx={{ p: 4, textAlign: 'center' }}>
+                <Typography variant="body2" color="text.secondary">
+                  No results found. Try searching by UPC or part of the description.
+                </Typography>
+              </Box>
+            )}
+            {remoteResults.map((p, idx) => (
+              <React.Fragment key={p.system_sku}>
+                <ListItem 
+                  secondaryAction={
+                    <Button 
+                      startIcon={<AddIcon />} 
+                      onClick={() => addSearchedProduct(p)}
+                      variant="outlined"
+                      size="small"
+                      sx={{ borderRadius: '8px' }}
+                    >
+                      Add to List
+                    </Button>
+                  }
+                >
+                  <ListItemText
+                    primary={p.product_name}
+                    primaryTypographyProps={{ fontWeight: 600, fontSize: '0.9rem' }}
+                    secondary={
+                      <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
+                        <Typography variant="caption">UPC: {p.upc || 'N/A'}</Typography>
+                        <Typography variant="caption">Brand: {p.brand_name || 'N/A'}</Typography>
+                        <Typography variant="caption">ID: {p.item_id}</Typography>
+                        <Typography variant="caption" sx={{ fontWeight: 700, color: '#007b5e' }}>Price: ${p.our_price.toFixed(2)}</Typography>
+                      </Stack>
+                    }
+                  />
+                </ListItem>
+                {idx < remoteResults.length - 1 && <Divider />}
+              </React.Fragment>
+            ))}
+          </List>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, bgcolor: '#f8f9fa' }}>
+          <Button onClick={() => setSearchDialogOpen(false)} color="inherit">Close</Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
