@@ -307,4 +307,7 @@ LEFT JOIN current_pricing p ON i.item_id = p.item_id
 LEFT JOIN flat_categories fc ON i.category_id = fc.category_id
 LEFT JOIN weekly_sales w    ON d.system_sku = w.system_sku
 
+-- Guarantee exactly one row per system_sku (matrix variants can share a system_sku)
+QUALIFY ROW_NUMBER() OVER (PARTITION BY d.system_sku ORDER BY i.item_id ASC) = 1
+
 ORDER BY i.system_sku;

@@ -230,7 +230,7 @@ const Products = () => {
 
   const handleSelectAllClick = (event) => {
     if (event.target.checked) {
-      const newSelecteds = filteredProducts.map((n) => n.upc || n.system_sku);
+      const newSelecteds = filteredProducts.map((n) => n.system_sku);
       setSelectedRows(new Set(newSelecteds));
       return;
     }
@@ -787,12 +787,12 @@ const Products = () => {
               const suggested = hasPricingRule ? getSuggestedPrice(product) : null;
               const diff = suggested !== null ? suggested - product.our_price : 0;
               const diffColor = diff < 0 ? theme.palette.success.main : diff > 0 ? theme.palette.error.main : '#a0a0a0';
-              const isSelected = selectedRows.has(product.upc || product.system_sku);
+              const isSelected = selectedRows.has(product.system_sku);
               return (
                 <TableRow
-                  key={product.upc || product.system_sku}
+                  key={product.system_sku}
                   hover
-                  onClick={(event) => handleClick(event, product.upc || product.system_sku)}
+                  onClick={(event) => handleClick(event, product.system_sku)}
                   role="checkbox"
                   aria-checked={isSelected}
                   selected={isSelected}
@@ -812,32 +812,39 @@ const Products = () => {
                   <TableCell sx={{ py: 1.5 }}>
                     {product.prospective_margin_pct !== undefined && product.prospective_margin_pct !== null ? `${product.prospective_margin_pct}%` : '—'}
                   </TableCell>
-                  <TableCell sx={{ fontWeight: 700 }}>
-                    ${Number(product.our_price).toFixed(2)}
+                  <TableCell>
+                    {(() => {
+                      const bench = product.competitors?.find(c => c.business_name === 'Google Benchmark');
+                      const hasBench = !!bench;
+                      
+                      return (
+                        <Box display="flex" alignItems="center" gap={0.5}>
+                          <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                            ${Number(product.our_price).toFixed(2)}
+                          </Typography>
+                          {hasBench && bench.price_diff_pct !== 0 && (
+                            <Typography
+                              variant="caption"
+                              sx={{
+                                color: bench.price < product.our_price ? '#dc3545' : '#28a745', // Red if Bici is higher (less competitive), Green if lower
+                                fontWeight: 700
+                              }}
+                            >
+                              {product.our_price > bench.price ? '↑' : '↓'}{Math.abs(bench.price_diff_pct).toFixed(1)}%
+                            </Typography>
+                          )}
+                        </Box>
+                      );
+                    })()}
                   </TableCell>
                   <TableCell>
                     {(() => {
                       const bench = product.competitors?.find(c => c.business_name === 'Google Benchmark');
                       if (!bench) return <Typography variant="caption" color="text.disabled">—</Typography>;
-                      const isLower = bench.price < product.our_price;
-                      const isHigher = bench.price > product.our_price;
                       return (
-                        <Box display="flex" alignItems="center" gap={0.5}>
-                          <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                            ${Number(bench.price).toFixed(2)}
-                          </Typography>
-                          {bench.price_diff_pct !== 0 && (
-                            <Typography
-                              variant="caption"
-                              sx={{
-                                color: isLower ? '#28a745' : '#dc3545',
-                                fontWeight: 700
-                              }}
-                            >
-                              {isHigher ? '↑' : '↓'}{Math.abs(bench.price_diff_pct).toFixed(1)}%
-                            </Typography>
-                          )}
-                        </Box>
+                        <Typography variant="body2" sx={{ fontWeight: 600, color: '#1a73e8' }}>
+                          ${Number(bench.price).toFixed(2)}
+                        </Typography>
                       );
                     })()}
                   </TableCell>
