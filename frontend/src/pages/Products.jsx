@@ -247,6 +247,14 @@ const Products = () => {
     setSelectedRows(newSelected);
   };
 
+  // Apply bucket filter before any column/search filters
+  const bucketFilteredProducts = useMemo(() => {
+    if (activeBucket === 'all') return products;
+    return products.filter(p =>
+      p.qualifying_buckets?.split(',').map(s => s.trim()).includes(activeBucket)
+    );
+  }, [products, activeBucket]);
+
   const filterOptions = useMemo(() => {
     const cats = [...new Set(bucketFilteredProducts.map(p => p.category_main).filter(Boolean))].sort();
     const sub1s = [...new Set(bucketFilteredProducts.map(p => p.subcategory_1).filter(Boolean))].sort();
@@ -293,14 +301,6 @@ const Products = () => {
   };
 
   const hasPricingRule = pricingRule !== 'none' || pctChange || dollarChange;
-
-  // 1. Apply bucket filter first
-  const bucketFilteredProducts = useMemo(() => {
-    if (activeBucket === 'all') return products;
-    return products.filter(p =>
-      p.qualifying_buckets?.split(',').map(s => s.trim()).includes(activeBucket)
-    );
-  }, [products, activeBucket]);
 
   // 2. Apply search + column filters on top
   const filteredProducts = useMemo(() => {
