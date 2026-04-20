@@ -19,6 +19,7 @@ import PercentIcon from '@mui/icons-material/Percent';
 import SpeedIcon from '@mui/icons-material/Speed';
 import SnailIcon from '@mui/icons-material/HourglassBottom';
 import AllInclusiveIcon from '@mui/icons-material/AllInclusive';
+import SearchIcon from '@mui/icons-material/Search';
 
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthProvider';
