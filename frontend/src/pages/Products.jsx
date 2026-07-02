@@ -144,6 +144,9 @@ const Products = () => {
       setRemoteResults(response.data);
     } catch (err) {
       console.error('Remote search failed:', err);
+      const msg = err.response?.data?.detail || err.message;
+      setError(`Search failed (${err.response?.status || 'Network'}): ${msg}`);
+      setRemoteResults([]);
     } finally {
       setRemoteSearching(false);
     }
@@ -306,8 +309,12 @@ const Products = () => {
       // Kick off a real competitor scrape on the backend, then poll until it finishes
       await axios.post(`${baseUrl}/api/scrape/run`);
       let progress = 5;
-      while (true) {
+      const MAX_POLLS = 120; // ~10 min at 5s intervals
+      let polls = 0;
+      let finished = false;
+      while (polls < MAX_POLLS) {
         await new Promise(r => setTimeout(r, 5000));
+        polls++;
         progress = Math.min(progress + 5, 90);
         setScrapeProgress(progress);
         const status = await axios.get(`${baseUrl}/api/scrape/status`);
@@ -321,8 +328,13 @@ const Products = () => {
           } else {
             setError(null);
           }
+          finished = true;
           break;
         }
+      }
+      if (!finished) {
+        setError('Scrape timed out waiting for completion. It may still be running on the server.');
+        return;
       }
       setScrapeProgress(95);
       // Reload products so the fresh competitor prices show up
@@ -349,6 +361,7 @@ const Products = () => {
     link.href = url;
     link.download = 'export.csv';
     link.click();
+    URL.revokeObjectURL(url);
   };
 
   const handleSelectAllClick = (event) => {
@@ -476,7 +489,7 @@ const Products = () => {
   // When rows are selected, all metric tiles scope to the selection; otherwise fall back to filteredProducts
   const activeProducts = useMemo(() => {
     if (selectedRows.size === 0) return filteredProducts;
-    return filteredProducts.filter(p => selectedRows.has(p.upc || p.system_sku));
+    return filteredProducts.filter(p => selectedRows.has(p.system_sku));
   }, [filteredProducts, selectedRows]);
 
   const isSelectionMode = selectedRows.size > 0;
@@ -745,7 +758,7 @@ const Products = () => {
           </Box>
 
           <Box display="flex" alignItems="center" gap={2}>
-            <IconButton onClick={() => { setSearch(''); setFilterCategory(''); setFilterBrand(''); setMarketFilter(''); setShowOnlyBenchmarked(false); }}>
+            <IconButton onClick={() => { setSearch(''); setFilterCategory(''); setFilterSubcat1(''); setFilterSubcat2(''); setFilterBrand(''); setMarketFilter(''); setShowOnlyBenchmarked(false); }}>
               <TuneIcon sx={{ color: '#5f6368' }} />
             </IconButton>
           </Box>
@@ -1105,7 +1118,7 @@ const Products = () => {
               placeholder="Enter search terms..."
               value={remoteSearchQuery}
               onChange={(e) => setRemoteSearchQuery(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleRemoteSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && handleRemoteSearch()}
               InputProps={{
                 endAdornment: (
                   <InputAdornment position="end">
@@ -1191,7 +1204,7 @@ const Products = () => {
               placeholder="competitor-domain.com"
               value={newCompetitorDomain}
               onChange={(e) => setNewCompetitorDomain(e.target.value)}
-              onKeyPress={(e) => e.key === 'Enter' && handleAddCompetitor()}
+              onKeyDown={(e) => e.key === 'Enter' && handleAddCompetitor()}
             />
             <Button
               variant="contained"

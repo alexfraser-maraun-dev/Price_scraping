@@ -35,6 +35,20 @@ def get_auth_config():
         'auth_mode': auth_mode
     }
 
+def safe_return_to(return_to: Optional[str]) -> str:
+    """Restrict post-login redirects to same-origin relative paths.
+
+    Prevents an open redirect via `/auth/login?return_to=https://evil.com`. Only a
+    single leading slash is allowed; `//host` (protocol-relative) and backslash
+    variants that browsers normalize to an absolute URL are rejected.
+    """
+    if not return_to or not return_to.startswith('/'):
+        return '/'
+    if return_to.startswith('//') or '\\' in return_to:
+        return '/'
+    return return_to
+
+
 def is_user_allowed(email, config):
     if not email:
         return False
@@ -91,7 +105,8 @@ def verify_google_token(id_token: str, client_id: str):
             'email': email,
             'name': payload.get('name', ''),
             'picture': payload.get('picture', ''),
-            'iat': payload.get('iat', 0)
+            'iat': payload.get('iat', 0),
+            'nonce': payload.get('nonce')
         }
     except Exception as e:
         raise ValueError(f"Invalid token: {str(e)}")
@@ -111,7 +126,7 @@ async def login(request: Request, return_to: str = '/'):
     
     request.session['nonce'] = nonce
     request.session['state'] = state
-    request.session['return_to'] = return_to
+    request.session['return_to'] = safe_return_to(return_to)
     
     params = {
         'client_id': config['client_id'],
@@ -166,11 +181,17 @@ async def callback(request: Request, state: Optional[str] = None, code: Optional
         claims = verify_google_token(id_token, client_id_conf)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-        
+
+    # Bind the ID token to this login attempt: the nonce we sent at /login must
+    # match the one Google echoed into the token (defends against token replay).
+    session_nonce = request.session.get('nonce')
+    if not session_nonce or claims.get('nonce') != session_nonce:
+        raise HTTPException(status_code=400, detail="Invalid or missing nonce. Please login again.")
+
     if not is_user_allowed(claims['email'], config):
         raise HTTPException(status_code=403, detail=f"Access Denied: Email {claims['email']} is not authorized for this application.")
         
-    return_to = request.session.get('return_to', '/')
+    return_to = safe_return_to(request.session.get('return_to', '/'))
     
     # Clear old session to prevent fixation
     request.session.clear() 

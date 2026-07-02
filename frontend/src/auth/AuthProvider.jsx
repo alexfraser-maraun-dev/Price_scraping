@@ -31,6 +31,21 @@ export const AuthProvider = ({ children }) => {
         checkAuth();
     }, []);
 
+    // Global 401 handling: if a session expires mid-use, any protected call that
+    // comes back 401 drops the user, and Layout re-renders to the Login screen.
+    useEffect(() => {
+        const interceptorId = axios.interceptors.response.use(
+            (response) => response,
+            (error) => {
+                if (error.response?.status === 401) {
+                    setUser(null);
+                }
+                return Promise.reject(error);
+            }
+        );
+        return () => axios.interceptors.response.eject(interceptorId);
+    }, []);
+
     const login = () => {
         const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
         const returnTo = window.location.origin + '/';

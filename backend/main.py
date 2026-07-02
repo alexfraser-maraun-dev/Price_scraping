@@ -110,6 +110,18 @@ try:
 except Exception as e:
     print(f"Error initializing Merchant API client: {e}")
 
+# ---------------------------------------------------------------------------
+# Response caching
+# ---------------------------------------------------------------------------
+# The /api/products build is expensive (full baseline SQL + Merchant API fetch),
+# and it was re-run on every page load. Cache the built response and the Merchant
+# insights map for a short TTL; the scrape job and /refresh invalidate on demand.
+CACHE_TTL_SECONDS = float(os.getenv("CACHE_TTL_SECONDS", "300"))
+_products_cache: dict = {"data": None, "ts": 0.0}
+_insights_cache: dict = {"data": None, "ts": 0.0}
+_products_lock = asyncio.Lock()
+_insights_lock = asyncio.Lock()
+
 @app.get("/api/health")
 async def health_check():
     return {
@@ -154,18 +166,18 @@ async def get_price_insights(merchant_id: str):
     try:
         start_time = time.time()
         
-        # Define search tasks for parallel execution
-        async def fetch_comp():
-            req = merchant_reports_v1.SearchRequest(parent=parent, query=comp_query)
-            return merchant_report_client.search(request=req)
-
-        async def fetch_products():
-            req = merchant_reports_v1.SearchRequest(parent=parent, query=product_query)
-            return merchant_report_client.search(request=req)
+        # The Merchant client is synchronous and paginates lazily, so iterating the
+        # pager also blocks. Materialize each result set inside a worker thread to
+        # keep the event loop free, and run both fetches in parallel.
+        def fetch_search(query: str):
+            req = merchant_reports_v1.SearchRequest(parent=parent, query=query)
+            return list(merchant_report_client.search(request=req))
 
         print(f"Fetching Merchant insights for ID: {merchant_id} (Parallel)...")
-        # Run Merchant API queries in parallel to save time
-        comp_response, product_response = await asyncio.gather(fetch_comp(), fetch_products())
+        comp_response, product_response = await asyncio.gather(
+            asyncio.to_thread(fetch_search, comp_query),
+            asyncio.to_thread(fetch_search, product_query),
+        )
         
         benchmarks_by_id = {}
         for row in comp_response:
@@ -193,28 +205,37 @@ async def get_price_insights(merchant_id: str):
         print(f"Error fetching price insights from Merchant API: {e}")
         return {}
 
-@app.get("/api/products", response_model=List[ProductComparison])
-async def get_product_comparisons(user: dict = Depends(require_auth)):
-    if not bq_client:
-        print("BQ client not initialized, returning empty list")
-        return []
-        
+async def get_price_insights_cached(merchant_id: str, force: bool = False) -> dict:
+    """TTL-cached wrapper around get_price_insights, shared by /products and /search."""
+    now = time.time()
+    if not force and _insights_cache["data"] is not None and now - _insights_cache["ts"] < CACHE_TTL_SECONDS:
+        return _insights_cache["data"]
+    async with _insights_lock:
+        now = time.time()
+        if not force and _insights_cache["data"] is not None and now - _insights_cache["ts"] < CACHE_TTL_SECONDS:
+            return _insights_cache["data"]
+        data = await get_price_insights(merchant_id)
+        _insights_cache["data"] = data
+        _insights_cache["ts"] = time.time()
+        return data
+
+async def _build_product_comparisons(force_refresh: bool = False):
+    """Run the full baseline query, enrich with Merchant + scraped offers, build models."""
     sql = get_product_source_sql()
     if not sql:
         raise HTTPException(status_code=500, detail="SQL query not found")
 
     overall_start = time.time()
     try:
-        # 1. Fetch from BigQuery
+        # 1. Fetch from BigQuery (blocking client → run off the event loop)
         print("Starting BigQuery fetch...")
         bq_start = time.time()
-        query_job = bq_client.query(sql)
-        results = list(query_job.result())
+        results = await asyncio.to_thread(lambda: list(bq_client.query(sql).result()))
         print(f"BigQuery fetch took {time.time() - bq_start:.2f} seconds. Found {len(results)} rows.")
-        
-        # 2. Fetch Price Insights from Merchant API
+
+        # 2. Fetch Price Insights from Merchant API (cached)
         merchant_id = os.getenv("MERCHANT_ID", "")
-        insights: dict = await get_price_insights(merchant_id)
+        insights: dict = await get_price_insights_cached(merchant_id, force=force_refresh)
 
         # 2b. Fetch latest scraped competitor offers (most recent successful run per domain)
         scraped_offers_by_item: dict = {}
@@ -296,10 +317,30 @@ async def get_product_comparisons(user: dict = Depends(require_auth)):
         print(f"Error in /api/products: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/products", response_model=List[ProductComparison])
+async def get_product_comparisons(user: dict = Depends(require_auth), force_refresh: bool = False):
+    if not bq_client:
+        print("BQ client not initialized, returning empty list")
+        return []
+
+    now = time.time()
+    if not force_refresh and _products_cache["data"] is not None and now - _products_cache["ts"] < CACHE_TTL_SECONDS:
+        return _products_cache["data"]
+
+    # Serialize concurrent misses so we build once, not once per waiting request
+    async with _products_lock:
+        now = time.time()
+        if not force_refresh and _products_cache["data"] is not None and now - _products_cache["ts"] < CACHE_TTL_SECONDS:
+            return _products_cache["data"]
+        products = await _build_product_comparisons(force_refresh=force_refresh)
+        _products_cache["data"] = products
+        _products_cache["ts"] = time.time()
+        return products
+
 @app.get("/api/products/refresh")
 async def refresh_products(user: dict = Depends(require_auth)):
-    """Explicit endpoint to re-run the full baseline query."""
-    return await get_product_comparisons(user)
+    """Explicit endpoint to re-run the full baseline query, bypassing the cache."""
+    return await get_product_comparisons(user, force_refresh=True)
 
 # ---------------------------------------------------------------------------
 # Competitor registry
@@ -351,6 +392,8 @@ def _run_scrape_job(domains):
     finally:
         scrape_state["running"] = False
         scrape_state["finished_at"] = time.time()
+        # Fresh offers landed — drop the cache so the next /api/products rebuilds
+        _products_cache["data"] = None
 
 @app.post("/api/scrape/run")
 async def trigger_scrape(user: dict = Depends(require_auth), domain: Optional[str] = None):
@@ -365,7 +408,7 @@ async def scrape_status(user: dict = Depends(require_auth)):
     return scrape_state
 
 @app.get("/api/products/search")
-async def search_products(q: str):
+async def search_products(q: str, user: dict = Depends(require_auth)):
     """Manually query BigQuery for specific products."""
     if not bq_client:
         raise HTTPException(status_code=500, detail="BigQuery client not initialized")
@@ -410,12 +453,13 @@ async def search_products(q: str):
     )
 
     try:
-        query_job = bq_client.query(sql, job_config=job_config)
-        results = list(query_job.result())
-        
+        results = await asyncio.to_thread(
+            lambda: list(bq_client.query(sql, job_config=job_config).result())
+        )
+
         # Map to model (similar to get_products but simplified)
         merchant_id = os.getenv("MERCHANT_ID", "")
-        insights = await get_price_insights(merchant_id)
+        insights = await get_price_insights_cached(merchant_id)
         
         products = []
         for row in results:
@@ -443,11 +487,15 @@ async def search_products(q: str):
                 clean_upc = str(product.upc).lstrip('0')
                 if clean_upc in insights:
                     matched = insights[clean_upc]
-                    if matched.get('benchmark_price_micros'):
+                    benchmark_micros = matched.get('benchmark_price_micros')
+                    if benchmark_micros:
+                        benchmark_price = float(benchmark_micros) / 1_000_000
+                        our_p = float(product.our_price) if product.our_price else 0.0
+                        diff_pct = ((benchmark_price - our_p) / our_p) * 100 if our_p > 0 else 0.0
                         product.competitors.append(CompetitorPrice(
                             business_name="Google Benchmark",
-                            price=float(matched['benchmark_price_micros']) / 1_000_000,
-                            price_diff_pct=float(matched.get('price_diff_pct', 0)) * 100
+                            price=float(round(benchmark_price, 2)),
+                            price_diff_pct=float(round(diff_pct, 2))
                         ))
             products.append(product)
             
