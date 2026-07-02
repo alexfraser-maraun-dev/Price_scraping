@@ -1,0 +1,63 @@
+name: Nightly competitor scrape
+
+# Runs the competitor price scraper (backend/run_scrape.py) on a schedule,
+# replacing the Render cron. Also runnable on demand from the Actions tab.
+on:
+  schedule:
+    # 09:00 UTC daily (overnight Mountain Time). GitHub cron is always UTC and
+    # may start a few minutes late under load — fine for a nightly job.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      domain:
+        description: "Limit to a single competitor domain (optional, e.g. thebikeshop.com)"
+        required: false
+        default: ""
+      dry_run:
+        description: "Fetch + match but do NOT write to BigQuery"
+        type: boolean
+        required: false
+        default: false
+
+# Never let two scrapes overlap (they append to the same BQ tables).
+concurrency:
+  group: competitor-scrape
+  cancel-in-progress: false
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r backend/requirements.txt
+
+      - name: Write GCP service-account key
+        env:
+          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: printf '%s' "$GCP_SA_KEY" > "$RUNNER_TEMP/gcp-key.json"
+
+      - name: Run scraper
+        working-directory: backend
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/gcp-key.json
+          DATAFORSEO_LOGIN: ${{ secrets.DATAFORSEO_LOGIN }}
+          DATAFORSEO_PASSWORD: ${{ secrets.DATAFORSEO_PASSWORD }}
+          INPUT_DOMAIN: ${{ github.event.inputs.domain }}
+          INPUT_DRY_RUN: ${{ github.event.inputs.dry_run }}
+        run: |
+          ARGS=""
+          [ -n "$INPUT_DOMAIN" ] && ARGS="$ARGS --domain $INPUT_DOMAIN"
+          [ "$INPUT_DRY_RUN" = "true" ] && ARGS="$ARGS --dry-run"
+          echo "Running: python run_scrape.py $ARGS"
+          python run_scrape.py $ARGS
