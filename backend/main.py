@@ -122,6 +122,24 @@ _insights_cache: dict = {"data": None, "ts": 0.0}
 _products_lock = asyncio.Lock()
 _insights_lock = asyncio.Lock()
 
+@app.on_event("startup")
+async def _ensure_scraper_tables():
+    """Create + seed the scraper registry/tables if missing.
+
+    Previously ensure_tables() ran only in the nightly scrape job, so a fresh
+    backend served /api/competitors against a non-existent Competitor_Registry
+    table — add/list both failed ("Failed to save competitor"). Running it here
+    makes the API self-heal on boot now that the service account has write access.
+    """
+    if not bq_client:
+        print("Skipping ensure_tables at startup: BigQuery client not initialized")
+        return
+    try:
+        ok = await asyncio.to_thread(scraper_bq.ensure_tables)
+        print(f"ensure_tables at startup -> {ok}")
+    except Exception as e:
+        print(f"ensure_tables at startup failed (continuing): {e}")
+
 @app.get("/api/health")
 async def health_check():
     return {
