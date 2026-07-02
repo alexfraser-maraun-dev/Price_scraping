@@ -40,7 +40,8 @@ const mockData = [
     brand_name: "Shimano", category_main: "Electrical",
     subcategory_1: "Drivetrain", subcategory_2: "Derailleurs",
     competitors: [
-      { business_name: "Google Benchmark", url: "", price: 92.40, price_diff_pct: 3.8 }
+      { business_name: "Google Benchmark", url: "", price: 92.40, price_diff_pct: 3.8 },
+      { business_name: "The Bike Shop", url: "https://thebikeshop.com", price: 94.99, price_diff_pct: 6.7, match_method: "gtin", match_confidence: 1.0 }
     ]
   },
   {
@@ -50,7 +51,8 @@ const mockData = [
     brand_name: "SRAM", category_main: "Electrical",
     subcategory_1: "Lighting", subcategory_2: "Panels",
     competitors: [
-      { business_name: "Google Benchmark", url: "", price: 58.50, price_diff_pct: 8.3 }
+      { business_name: "Google Benchmark", url: "", price: 58.50, price_diff_pct: 8.3 },
+      { business_name: "Steed Cycles", url: "https://steedcycles.com", price: 51.00, price_diff_pct: -5.6, match_method: "fuzzy_title", match_confidence: 0.92 }
     ]
   },
   {
@@ -91,6 +93,13 @@ const Products = () => {
   const [remoteSearchQuery, setRemoteSearchQuery] = useState('');
   const [remoteSearching, setRemoteSearching] = useState(false);
   const [remoteResults, setRemoteResults] = useState([]);
+
+  // Competitor registry state
+  const [competitors, setCompetitors] = useState([]);
+  const [competitorDialogOpen, setCompetitorDialogOpen] = useState(false);
+  const [newCompetitorDomain, setNewCompetitorDomain] = useState('');
+  const [addingCompetitor, setAddingCompetitor] = useState(false);
+  const [competitorError, setCompetitorError] = useState(null);
 
   // Sort/Filter state
   const [sortField, setSortField] = useState('upc');
@@ -154,9 +163,63 @@ const Products = () => {
     if (onBucketChange) onBucketChange('search_result');
   };
 
+  const fetchCompetitors = async () => {
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      const response = await axios.get(`${baseUrl}/api/competitors`);
+      setCompetitors(response.data);
+    } catch (err) {
+      console.error('Failed to fetch competitor registry:', err);
+      setCompetitors([]);
+    }
+  };
+
+  const handleAddCompetitor = async () => {
+    const domain = newCompetitorDomain.trim();
+    if (!domain) return;
+    setAddingCompetitor(true);
+    setCompetitorError(null);
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      await axios.post(`${baseUrl}/api/competitors`, { domain });
+      setNewCompetitorDomain('');
+      await fetchCompetitors();
+    } catch (err) {
+      setCompetitorError(err.response?.data?.detail || err.message);
+    } finally {
+      setAddingCompetitor(false);
+    }
+  };
+
+  const handleToggleCompetitor = async (domain, enabled) => {
+    // Optimistic toggle; revert by re-fetching on failure
+    setCompetitors(prev => prev.map(c => c.domain === domain ? { ...c, enabled } : c));
+    try {
+      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      await axios.patch(`${baseUrl}/api/competitors/${domain}`, { enabled });
+    } catch (err) {
+      console.error('Failed to update competitor:', err);
+      fetchCompetitors();
+    }
+  };
+
   useEffect(() => {
     fetchProducts();
+    fetchCompetitors();
   }, []);
+
+  // Column list: enabled registry entries; falls back to names present in
+  // product data (mock or stale registry) so columns still render.
+  const competitorColumns = useMemo(() => {
+    if (competitors.length > 0) {
+      return competitors.filter(c => c.enabled).map(c => c.display_name || c.domain);
+    }
+    const names = new Set();
+    products.forEach(p => (p.competitors || []).forEach(c => {
+      if (c.business_name !== 'Google Benchmark') names.add(c.business_name);
+    }));
+    return [...names].sort();
+  }, [competitors, products]);
 
   const handleCSVUpload = (event) => {
     const file = event.target.files[0];
@@ -236,15 +299,36 @@ const Products = () => {
 
   const handleScrape = async () => {
     setIsScraping(true);
-    setScrapeProgress(10); // Start progress
+    setScrapeProgress(5);
+    const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
     try {
-      // Re-fetch products from the backend (which hits the Merchant API)
-      const baseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+      // Kick off a real competitor scrape on the backend, then poll until it finishes
+      await axios.post(`${baseUrl}/api/scrape/run`);
+      let progress = 5;
+      while (true) {
+        await new Promise(r => setTimeout(r, 5000));
+        progress = Math.min(progress + 5, 90);
+        setScrapeProgress(progress);
+        const status = await axios.get(`${baseUrl}/api/scrape/status`);
+        if (!status.data.running) {
+          const result = status.data.last_result || {};
+          const failed = Object.entries(result).filter(([, v]) => v?.status === 'error');
+          if (result.error) {
+            setError(`Scrape failed: ${result.error}`);
+          } else if (failed.length > 0) {
+            setError(`Scrape finished with errors for: ${failed.map(([d]) => d).join(', ')}`);
+          } else {
+            setError(null);
+          }
+          break;
+        }
+      }
+      setScrapeProgress(95);
+      // Reload products so the fresh competitor prices show up
       const response = await axios.get(`${baseUrl}/api/products`);
       setProducts(response.data);
       setScrapeProgress(100);
-      setError(null);
     } catch (err) {
       console.error('Failed to run scrape:', err);
       const msg = err.response?.data?.detail || err.message;
@@ -520,13 +604,21 @@ const Products = () => {
           <Button variant="outlined" startIcon={<DownloadIcon />} onClick={handleExportCSV} sx={{ color: 'text.primary', borderColor: '#eef0f2' }}>
             Export CSV
           </Button>
-          <Button 
-            variant="outlined" 
-            startIcon={<StorageIcon />} 
-            onClick={() => fetchProducts(true)} 
+          <Button
+            variant="outlined"
+            startIcon={<StorageIcon />}
+            onClick={() => fetchProducts(true)}
             sx={{ color: 'text.primary', borderColor: '#eef0f2' }}
           >
             Sync Database
+          </Button>
+          <Button
+            variant="outlined"
+            startIcon={<StyleIcon />}
+            onClick={() => setCompetitorDialogOpen(true)}
+            sx={{ color: 'text.primary', borderColor: '#eef0f2' }}
+          >
+            Competitors
           </Button>
           <Button
             variant="contained"
@@ -857,6 +949,11 @@ const Products = () => {
                 </TableSortLabel>
               </TableCell>
               <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#1a73e8', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Benchmark</TableCell>
+              {competitorColumns.map(name => (
+                <TableCell key={name} sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#5f6368', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                  {name}
+                </TableCell>
+              ))}
               <TableCell sx={{ bgcolor: '#f8f9fa', fontWeight: 700, fontSize: '0.7rem', color: '#007b5e', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>New Price</TableCell>
               <TableCell sx={{ bgcolor: '#f8f9fa' }} />
             </TableRow>
@@ -927,6 +1024,45 @@ const Products = () => {
                       );
                     })()}
                   </TableCell>
+                  {competitorColumns.map(name => {
+                    const comp = product.competitors?.find(c => c.business_name === name);
+                    if (!comp) {
+                      return <TableCell key={name}><Typography variant="caption" color="text.disabled">—</Typography></TableCell>;
+                    }
+                    const isFuzzy = comp.match_method === 'fuzzy_title';
+                    const cell = (
+                      <Box display="flex" alignItems="center" gap={0.5}>
+                        <Typography
+                          variant="body2"
+                          component={comp.url ? 'a' : 'span'}
+                          href={comp.url || undefined}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          onClick={(e) => e.stopPropagation()}
+                          sx={{ fontWeight: 600, color: '#5f6368', textDecoration: comp.url ? 'underline dotted' : 'none' }}
+                        >
+                          ${Number(comp.price).toFixed(2)}
+                        </Typography>
+                        {comp.price_diff_pct !== 0 && (
+                          <Typography variant="caption" sx={{ color: comp.price < product.our_price ? '#dc3545' : '#28a745', fontWeight: 700 }}>
+                            {comp.price_diff_pct > 0 ? '↑' : '↓'}{Math.abs(comp.price_diff_pct).toFixed(1)}%
+                          </Typography>
+                        )}
+                        {isFuzzy && (
+                          <Typography variant="caption" sx={{ color: '#f29900', fontWeight: 700 }}>≈</Typography>
+                        )}
+                      </Box>
+                    );
+                    return (
+                      <TableCell key={name}>
+                        {isFuzzy ? (
+                          <Tooltip title={`Fuzzy title match (${Math.round((comp.match_confidence || 0) * 100)}% confidence) — verify the product`}>
+                            {cell}
+                          </Tooltip>
+                        ) : cell}
+                      </TableCell>
+                    );
+                  })}
 
                   <TableCell>
                     {suggested !== null ? (
@@ -1030,6 +1166,83 @@ const Products = () => {
         </DialogContent>
         <DialogActions sx={{ p: 2, bgcolor: '#f8f9fa' }}>
           <Button onClick={() => setSearchDialogOpen(false)} color="inherit">Close</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Competitor Management Dialog */}
+      <Dialog
+        open={competitorDialogOpen}
+        onClose={() => setCompetitorDialogOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        PaperProps={{ sx: { borderRadius: '16px' } }}
+      >
+        <DialogTitle sx={{ fontWeight: 800, pb: 1 }}>
+          Tracked Competitors
+          <Typography variant="body2" color="text.secondary">
+            Prices are scraped nightly for enabled competitors. Add a domain to start tracking it — the best data source is detected automatically.
+          </Typography>
+        </DialogTitle>
+        <DialogContent>
+          <Box display="flex" gap={1} sx={{ mt: 1, mb: 2 }}>
+            <TextField
+              fullWidth
+              size="small"
+              placeholder="competitor-domain.com"
+              value={newCompetitorDomain}
+              onChange={(e) => setNewCompetitorDomain(e.target.value)}
+              onKeyPress={(e) => e.key === 'Enter' && handleAddCompetitor()}
+            />
+            <Button
+              variant="contained"
+              startIcon={addingCompetitor ? <CircularProgress size={16} color="inherit" /> : <AddIcon />}
+              onClick={handleAddCompetitor}
+              disabled={addingCompetitor || !newCompetitorDomain.trim()}
+              sx={{ bgcolor: '#007b5e', whiteSpace: 'nowrap', '&:hover': { bgcolor: '#00634b' } }}
+            >
+              {addingCompetitor ? 'Detecting...' : 'Add'}
+            </Button>
+          </Box>
+          {competitorError && <Alert severity="error" sx={{ mb: 2 }}>{competitorError}</Alert>}
+          <List sx={{ bgcolor: '#f8f9fa', borderRadius: '12px', overflow: 'hidden' }}>
+            {competitors.length === 0 && (
+              <Box sx={{ p: 3, textAlign: 'center' }}>
+                <Typography variant="body2" color="text.secondary">
+                  No competitors registered yet (or the backend is unreachable).
+                </Typography>
+              </Box>
+            )}
+            {competitors.map((c, idx) => (
+              <React.Fragment key={c.domain}>
+                <ListItem
+                  secondaryAction={
+                    <Switch
+                      size="small"
+                      checked={!!c.enabled}
+                      onChange={(e) => handleToggleCompetitor(c.domain, e.target.checked)}
+                    />
+                  }
+                >
+                  <ListItemText
+                    primary={c.display_name || c.domain}
+                    primaryTypographyProps={{ fontWeight: 600, fontSize: '0.9rem' }}
+                    secondary={
+                      <Stack direction="row" spacing={2} sx={{ mt: 0.5 }}>
+                        <Typography variant="caption">{c.domain}</Typography>
+                        <Typography variant="caption" color="text.secondary">
+                          source: {c.connector_type === 'serp_api' ? 'Google Shopping API' : c.connector_type}
+                        </Typography>
+                      </Stack>
+                    }
+                  />
+                </ListItem>
+                {idx < competitors.length - 1 && <Divider />}
+              </React.Fragment>
+            ))}
+          </List>
+        </DialogContent>
+        <DialogActions sx={{ p: 2, bgcolor: '#f8f9fa' }}>
+          <Button onClick={() => setCompetitorDialogOpen(false)} color="inherit">Close</Button>
         </DialogActions>
       </Dialog>
     </Box>

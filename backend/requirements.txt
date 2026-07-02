@@ -50,3 +50,4 @@ google-shopping-merchant-reports
 PyJWT[crypto]>=2.8.0
 itsdangerous>=2.1.2
 httpx>=0.25.0
+rapidfuzz>=3.6.0

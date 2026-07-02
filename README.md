@@ -117,7 +117,7 @@ The app opens at `http://localhost:5173`. It proxies API calls to `http://localh
 - **Metric tiles** — Live counts and aggregates: Average Margin, Proposed Margin, Below Market UPCs, Above Market UPCs, $ Total Below, % Total Below. All tiles scope to the current row selection when checkboxes are active.
 - **Pricing strategy simulator** — Choose from 5 rule presets (match lowest, undercut by 1%, match average, beat average by 2%, match highest), then stack a % or $ adjustment on top. The "Change Result" column and "Proposed Margin" tile update in real time without touching any live data.
 - **Google Benchmark column** — Shows the `PriceCompetitivenessProductView` benchmark price per UPC with a signed % delta vs. your price.
-- **Competitor columns** — One column per tracked domain (`primeauvelo.com`, `enroute.cc`, `thebikeshop.com`, `steedcycles.com`) with color-coded price deltas.
+- **Competitor columns** — One column per enabled competitor in the registry, with color-coded price deltas, links to the competitor's product page, and a `≈` marker on low-confidence (fuzzy title) matches. Competitors are added/toggled live from the "Competitors" dialog.
 - **Filters** — Search by product name or UPC, filter by Category, Brand, and market position (above/below). "Benchmarked Only" toggle limits the view to SKUs that have a Google benchmark match.
 - **CSV import/export** — Upload a CSV with the required headers to override BigQuery data locally; export the current price list.
 - **Run Scrape** — Re-fetches from the backend (BigQuery + Merchant API) on demand with a progress indicator.
@@ -154,7 +154,12 @@ Implements OAuth2 (refresh-token flow) against the Lightspeed R-Series REST API.
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/api/health` | Health check |
-| `GET` | `/api/products` | Returns merged BigQuery + Merchant API product list |
+| `GET` | `/api/products` | Merged BigQuery + Merchant API + scraped competitor prices |
+| `GET` | `/api/competitors` | List the competitor registry |
+| `POST` | `/api/competitors` | Add a competitor (auto-detects the data source) |
+| `PATCH` | `/api/competitors/{domain}` | Enable/disable or edit a competitor |
+| `POST` | `/api/scrape/run` | Trigger a scrape of all enabled competitors |
+| `GET` | `/api/scrape/status` | Poll the running/last scrape |
 
 ### `ProductComparison` Response Schema
 
@@ -199,31 +204,37 @@ Any missing header will cause the upload to reject the file with a descriptive e
 
 ---
 
-## Target Competitors
+## Competitor Price Sourcing
 
-Configured in both `backend/main.py` and `frontend/src/pages/Products.jsx`:
+The Merchant API v1 only exposes an aggregated benchmark price, so per-competitor prices are sourced by our own scrape pipeline (`backend/scrapers/` + `backend/run_scrape.py`).
 
-```python
-TARGET_COMPETITORS = [
-    "primeauvelo.com",
-    "enroute.cc",
-    "thebikeshop.com",
-    "steedcycles.com"
-]
+Competitors live in the BigQuery table `BiciPricingScraper.Competitor_Registry` and are managed from the dashboard ("Competitors" button) or via `GET/POST/PATCH /api/competitors` — **no redeploy needed to add or swap one**. When a domain is added, the backend probes it and picks the cheapest working connector:
+
+| Connector | How it reads prices | Example |
+|---|---|---|
+| `shopify_json` | Paginates the store's public `/products.json` (full catalog incl. barcode/sku) | thebikeshop.com, steedcycles.com |
+| `shopify_html` | Walks `sitemap.xml` product URLs, parses JSON-LD on each page | enroute.cc |
+| `serp_api` | Looks up our top-revenue GTINs on Google Shopping via DataForSEO (paid, needs `DATAFORSEO_LOGIN`/`DATAFORSEO_PASSWORD`) and keeps listings sold by the domain | primeauvelo.com |
+
+Scraped offers are matched to our catalog by GTIN/UPC (leading zeros stripped), then brand+SKU, then fuzzy title match (flagged `≈` in the UI as low-confidence). Results are written to:
+
+- `bici-klaviyo-datasync.BiciPricingScraper.BiciPricingScraper_Runs` — one row per domain per run
+- `bici-klaviyo-datasync.BiciPricingScraper.BiciPricingScraper_Competitors` — matched offers
+
+`/api/products` merges the latest successful run per competitor into each product's `competitors[]`, alongside the Google Benchmark.
+
+### Running a scrape
+
+```bash
+cd backend
+python run_scrape.py --dry-run                   # fetch + match, no BQ writes
+python run_scrape.py --domain thebikeshop.com    # one competitor
+python run_scrape.py                             # all enabled competitors
 ```
 
-To add or swap competitors, update this list in both files and redeploy.
+A nightly Render Cron Job (`price-intelligence-scraper` in `render.yaml`) runs the full scrape at 09:00 UTC. The dashboard "Run Scrape" button triggers the same pipeline on demand via `POST /api/scrape/run`.
 
----
-
-## BigQuery Write Targets (Future)
-
-The `BigQueryClient` class is wired to write scrape results to:
-
-- `bici-klaviyo-datasync.BiciPricingScraper.BiciPricingScraper_Runs`
-- `bici-klaviyo-datasync.BiciPricingScraper.BiciPricingScraper_Competitors`
-
-Streaming insert logic is implemented in `write_comparison_results()`. This is currently unused; it is intended for scheduled scrape-run logging.
+Scraping etiquette is built in: ~1 request/second per domain, identifiable User-Agent, robots.txt honored, public price data only.
 
 ---
 

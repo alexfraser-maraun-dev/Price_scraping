@@ -13,6 +13,9 @@ import pandas as pd
 from dotenv import load_dotenv
 from starlette.middleware.sessions import SessionMiddleware
 from bici_fastapi_auth import auth_router, require_auth, get_auth_config
+from bigquery_client import BigQueryClient
+from scrapers import detect_connector_type
+from run_scrape import run_scrapes
 
 load_dotenv()
 
@@ -42,9 +45,22 @@ app.add_middleware(
 # Models
 class CompetitorPrice(BaseModel):
     business_name: str
-    url: str
+    url: str = ""
     price: float
     price_diff_pct: float
+    match_method: Optional[str] = None
+    match_confidence: Optional[float] = None
+
+class CompetitorEntry(BaseModel):
+    domain: str
+    display_name: Optional[str] = None
+    connector_type: Optional[str] = None
+    enabled: Optional[bool] = None
+
+class CompetitorUpdate(BaseModel):
+    display_name: Optional[str] = None
+    connector_type: Optional[str] = None
+    enabled: Optional[bool] = None
 
 class ProductComparison(BaseModel):
     item_id: Optional[int]
@@ -80,6 +96,9 @@ try:
         print("GOOGLE_APPLICATION_CREDENTIALS not set")
 except Exception as e:
     print(f"Error initializing BigQuery client: {e}")
+
+# Scraper-side BQ client (registry + scraped offers) reuses the same credentials
+scraper_bq = BigQueryClient(client=bq_client) if bq_client else BigQueryClient()
 
 try:
     if merchant_creds_path:
@@ -196,7 +215,21 @@ async def get_product_comparisons(user: dict = Depends(require_auth)):
         # 2. Fetch Price Insights from Merchant API
         merchant_id = os.getenv("MERCHANT_ID", "")
         insights: dict = await get_price_insights(merchant_id)
-        
+
+        # 2b. Fetch latest scraped competitor offers (most recent successful run per domain)
+        scraped_offers_by_item: dict = {}
+        display_names: dict = {}
+        try:
+            offers_start = time.time()
+            for comp in await asyncio.to_thread(scraper_bq.list_competitors):
+                display_names[comp["domain"]] = comp.get("display_name") or comp["domain"]
+            for offer in await asyncio.to_thread(scraper_bq.fetch_latest_offers):
+                scraped_offers_by_item.setdefault(offer["item_id"], []).append(offer)
+            print(f"Scraped-offer fetch took {time.time() - offers_start:.2f} seconds "
+                  f"({len(scraped_offers_by_item)} items with offers).")
+        except Exception as e:
+            print(f"Error fetching scraped competitor offers (continuing without): {e}")
+
         products = []
         for row in results:
             product = ProductComparison(
@@ -239,7 +272,21 @@ async def get_product_comparisons(user: dict = Depends(require_auth)):
                             price=float(round(benchmark_price, 2)),
                             price_diff_pct=float(round(diff_pct, 2))
                         ))
-            
+
+            # 4. Append scraped per-competitor prices
+            our_p = float(product.our_price) if product.our_price else 0.0
+            for offer in scraped_offers_by_item.get(product.item_id, []):
+                offer_price = float(offer["price"])
+                diff_pct = ((offer_price - our_p) / our_p) * 100 if our_p > 0 else 0.0
+                product.competitors.append(CompetitorPrice(
+                    business_name=display_names.get(offer["domain"], offer["domain"]),
+                    url=offer.get("url") or "",
+                    price=round(offer_price, 2),
+                    price_diff_pct=round(diff_pct, 2),
+                    match_method=offer.get("match_method"),
+                    match_confidence=offer.get("match_confidence"),
+                ))
+
             products.append(product)
             
         print(f"Total /api/products request took {time.time() - overall_start:.2f} seconds for {len(products)} items.")
@@ -250,9 +297,72 @@ async def get_product_comparisons(user: dict = Depends(require_auth)):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/products/refresh")
-async def refresh_products():
+async def refresh_products(user: dict = Depends(require_auth)):
     """Explicit endpoint to re-run the full baseline query."""
-    return await get_products()
+    return await get_product_comparisons(user)
+
+# ---------------------------------------------------------------------------
+# Competitor registry
+# ---------------------------------------------------------------------------
+@app.get("/api/competitors")
+async def list_competitors(user: dict = Depends(require_auth)):
+    return await asyncio.to_thread(scraper_bq.list_competitors)
+
+@app.post("/api/competitors")
+async def add_competitor(entry: CompetitorEntry, user: dict = Depends(require_auth)):
+    domain = entry.domain.lower().strip().replace("https://", "").replace("http://", "").strip("/")
+    if not domain or "." not in domain:
+        raise HTTPException(status_code=400, detail="Invalid domain")
+
+    connector_type = entry.connector_type
+    if not connector_type:
+        # Probe the site to pick the cheapest connector that can read its prices
+        connector_type = await asyncio.to_thread(detect_connector_type, domain)
+
+    ok = await asyncio.to_thread(
+        scraper_bq.upsert_competitor, domain, entry.display_name, connector_type,
+        entry.enabled if entry.enabled is not None else True,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to save competitor")
+    return {"domain": domain, "connector_type": connector_type, "enabled": entry.enabled if entry.enabled is not None else True}
+
+@app.patch("/api/competitors/{domain}")
+async def update_competitor(domain: str, update: CompetitorUpdate, user: dict = Depends(require_auth)):
+    ok = await asyncio.to_thread(
+        scraper_bq.upsert_competitor, domain.lower(), update.display_name,
+        update.connector_type, update.enabled,
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to update competitor")
+    return {"domain": domain.lower(), "updated": True}
+
+# ---------------------------------------------------------------------------
+# Scrape trigger
+# ---------------------------------------------------------------------------
+scrape_state = {"running": False, "started_at": None, "finished_at": None, "last_result": None}
+
+def _run_scrape_job(domains):
+    try:
+        result = run_scrapes(domains=domains, bq=scraper_bq)
+        scrape_state["last_result"] = result
+    except Exception as e:
+        scrape_state["last_result"] = {"error": str(e)}
+    finally:
+        scrape_state["running"] = False
+        scrape_state["finished_at"] = time.time()
+
+@app.post("/api/scrape/run")
+async def trigger_scrape(user: dict = Depends(require_auth), domain: Optional[str] = None):
+    if scrape_state["running"]:
+        raise HTTPException(status_code=409, detail="A scrape is already running")
+    scrape_state.update({"running": True, "started_at": time.time(), "finished_at": None})
+    asyncio.get_running_loop().run_in_executor(None, _run_scrape_job, [domain] if domain else None)
+    return {"started": True}
+
+@app.get("/api/scrape/status")
+async def scrape_status(user: dict = Depends(require_auth)):
+    return scrape_state
 
 @app.get("/api/products/search")
 async def search_products(q: str):

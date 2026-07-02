@@ -44,3 +44,24 @@ services:
         sync: false
       # Note: For GOOGLE_APPLICATION_CREDENTIALS and MERCHANT_APPLICATION_CREDENTIALS,
       # you will use Render "Secret Files", not env vars.
+
+  # ==================================
+  # NIGHTLY COMPETITOR PRICE SCRAPE
+  # ==================================
+  - type: cron
+    name: price-intelligence-scraper
+    env: python
+    plan: starter
+    rootDir: backend
+    schedule: "0 9 * * *"  # 09:00 UTC ≈ overnight in Mountain Time
+    buildCommand: pip install -r requirements.txt
+    startCommand: python run_scrape.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.0
+      # GOOGLE_APPLICATION_CREDENTIALS via Render "Secret Files" (same as backend)
+      # DataForSEO credentials for the serp_api connector (primeauvelo.com etc.)
+      - key: DATAFORSEO_LOGIN
+        sync: false
+      - key: DATAFORSEO_PASSWORD
+        sync: false
